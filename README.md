@@ -33,6 +33,7 @@ guide, and an ESPHome wall scanner. See [Roadmap](#roadmap).
 - [Entities](#entities)
 - [Actions](#actions)
 - [Events](#events)
+- [Order tracking from emails](#order-tracking-from-emails)
 - [Printing](#printing)
 - [Scanning with an iPhone Shortcut](#scanning-with-an-iphone-shortcut)
 - [Blueprint and examples](#blueprint-and-examples)
@@ -164,6 +165,7 @@ these codes on the device and stays silent.
 | `sensor.<store>_needs_review` | Number of items to review |
 | `sensor.<store>_unmatched` | Number of unknown barcodes |
 | `sensor.<store>_last_stock_check` | When stock was last checked |
+| `sensor.<store>_kroger_order` | Current order status, from order emails (see [Order tracking](#order-tracking-from-emails)) |
 | `button.<store>_sync_now` | Push any pending cart items |
 | `button.<store>_check_stock_now` | Re-check waiting items now |
 | `button.<store>_print_receipt` | Print to the receipt printer |
@@ -281,6 +283,63 @@ actions:
 
 Fired when a stock check finds waiting items back in stock. Data: `pushed` and
 `held` (lists of `{item_id, name}`) and `config_entry_id`.
+
+## Order tracking from emails
+
+Kroger's public API can't read orders, so order status comes from the emails
+Kroger sends instead, read through Home Assistant's built-in
+[IMAP integration](https://www.home-assistant.io/integrations/imap/).
+
+### Setup
+
+1. **Settings → Devices & services → Add integration → IMAP**, and sign in to
+   the mailbox that gets your Kroger order emails. For Gmail, use an app
+   password. Tips:
+   - **Search** decides which messages trigger. The default (`UnSeen
+     UnDeleted`) works. To skip everything else, use for example
+     `UnDeleted FROM kroger.com` (or your banner's domain).
+   - You don't need to turn on "message text" in the IMAP options: Kroger
+     Restock fetches the full message itself with `imap.fetch`.
+2. In **Kroger Restock → Configure → Order tracking**, pick that IMAP account.
+3. Optional settings on the same page:
+   - **Notify on order updates** (on by default): ready for pickup, out for
+     delivery, cancelled, and missing items, sent to your notification
+     targets.
+   - **Re-add shorted items automatically** (off by default): when an email
+     says items were out of stock or not picked, the matching list items go
+     back on the list: stock check, then pushed to the cart again for your
+     next order. Matching uses product names, so it's off until you trust it.
+     With it off, the notification lists what was missing and you uncheck
+     those items yourself.
+
+Only mail from Kroger-family domains is read (kroger.com, ralphs.com,
+fredmeyer.com, kingsoopers.com, harristeeter.com and the other banners); other
+mail in the mailbox is ignored. Each email is processed once.
+
+### The order sensor
+
+`sensor.<store>_kroger_order` shows the current order: `placed`, `shopping`,
+`ready`, `out_for_delivery`, `completed`, `cancelled`, or `none`. A finished
+order stays visible for two days, then the sensor goes back to `none`.
+
+Attributes: `order_number`, `window` (pickup or delivery window, as written in
+the email), `modality`, `placed`, `updated`, `shorted_items`,
+`substitutions`, `last_email`, and `recent_orders` (the last five).
+
+### Event: `kroger_restock_order_update`
+
+Fired for every order email that changes something. Data: `order_number`,
+`status`, `previous_status`, `window`, `modality`, `shorted` (names from this
+email), `shorted_item_ids` (shorted names matched to list items),
+`readded_item_ids`, `substitutions`, `subject`, `config_entry_id`.
+
+### Limitations
+
+Parsing depends on the wording of Kroger's emails, which can change and
+differs a little between banners. An email that can't be classified is
+ignored, and the sensor keeps its last state. If your emails aren't
+recognized, please open an issue with a redacted copy (remove names,
+addresses, order numbers and payment details) so the rules can be updated.
 
 ## Printing
 
@@ -407,7 +466,8 @@ These come from Kroger's public API:
   won't know.** Deleting an item from the Home Assistant list doesn't remove it
   from your Kroger cart either.
 - **No Kroger Shopping List, order history or checkout.** You still place the
-  order in the Kroger app or website.
+  order in the Kroger app or website. Order *status* can come from Kroger's
+  emails instead; see [Order tracking](#order-tracking-from-emails).
 - **Daily rate limits** apply per endpoint (about 10,000 product calls, 5,000
   cart calls and 1,600 location calls per day). The integration caches product
   lookups and barcode matches, checks duplicates before calling the API, and
@@ -459,6 +519,11 @@ the real cart.
 3. ✅ Printing: ESC/POS receipt printer and letter-size PDF over IPP
 4. ✅ Blueprint, example automations, iOS Shortcut guide
 5. ✅ ESPHome wall scanner ([`esphome/`](esphome/))
+
+## Future plans
+
+See [docs/ROADMAP.md](docs/ROADMAP.md): learned name → product matching, and
+a Tandoor Recipes shopping-list connector.
 
 ## License
 

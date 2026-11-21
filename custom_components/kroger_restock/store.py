@@ -99,12 +99,53 @@ class ListItem:
 
 
 @dataclass(slots=True)
+class KrogerOrder:
+    """An order, as reconstructed from Kroger's emails."""
+
+    order_number: str
+    status: str
+    updated_at: datetime
+    placed_at: datetime | None = None
+    window: str | None = None
+    modality: str | None = None
+    shorted: list[str] = field(default_factory=list)
+    substitutions: list[str] = field(default_factory=list)
+    last_subject: str | None = None
+    history: list[dict[str, str]] = field(default_factory=list)
+
+    def as_dict(self) -> dict[str, Any]:
+        """Serialize for storage."""
+        data = asdict(self)
+        data["updated_at"] = self.updated_at.isoformat()
+        data["placed_at"] = self.placed_at.isoformat() if self.placed_at else None
+        return data
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> KrogerOrder:
+        """Deserialize, ignoring unknown keys."""
+        known = {f.name for f in fields(cls)}
+        values = {k: v for k, v in data.items() if k in known}
+        values["updated_at"] = dt_util.parse_datetime(values["updated_at"])
+        if values.get("placed_at"):
+            values["placed_at"] = dt_util.parse_datetime(values["placed_at"])
+        return cls(**values)
+
+
+MAX_ORDERS = 10
+MAX_SEEN_EMAILS = 200
+
+
+@dataclass(slots=True)
 class RestockData:
     """Everything we persist."""
 
     items: list[ListItem] = field(default_factory=list)
     # Scanned digits -> Kroger product ID that matched.
     barcode_cache: dict[str, str] = field(default_factory=dict)
+    # Most recent first.
+    orders: list[KrogerOrder] = field(default_factory=list)
+    # Keys of order emails already processed (IMAP entry + UID).
+    seen_emails: list[str] = field(default_factory=list)
 
 
 class _VersionedStore(Store[dict[str, Any]]):
@@ -120,6 +161,10 @@ class _VersionedStore(Store[dict[str, Any]]):
             # 1.2 added give_up_snoozed_at to items.
             for item in old_data.get("items", []):
                 item.setdefault("give_up_snoozed_at", None)
+        if old_major_version == 1 and old_minor_version < 3:
+            # 1.3 added order tracking from emails.
+            old_data.setdefault("orders", [])
+            old_data.setdefault("seen_emails", [])
         return old_data
 
 
@@ -144,6 +189,8 @@ class RestockStore:
         return RestockData(
             items=[ListItem.from_dict(row) for row in raw.get("items", [])],
             barcode_cache=dict(raw.get("barcode_cache", {})),
+            orders=[KrogerOrder.from_dict(row) for row in raw.get("orders", [])],
+            seen_emails=list(raw.get("seen_emails", [])),
         )
 
     async def async_save(self, data: RestockData) -> None:
@@ -163,4 +210,6 @@ class RestockStore:
         return {
             "items": [item.as_dict() for item in data.items],
             "barcode_cache": dict(data.barcode_cache),
+            "orders": [order.as_dict() for order in data.orders],
+            "seen_emails": list(data.seen_emails),
         }

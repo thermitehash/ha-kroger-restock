@@ -9,5 +9,5 @@
   "iot_class": "cloud_polling",
   "issue_tracker": "https://github.com/thrivestorm2/ha-kroger-restock/issues",
   "requirements": ["fpdf2==2.9.0"],
-  "version": "0.5.0"
+  "version": "0.6.0"
 }

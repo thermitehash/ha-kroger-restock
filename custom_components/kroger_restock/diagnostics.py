@@ -51,6 +51,16 @@ async def async_get_config_entry_diagnostics(
             )
         },
         "barcode_cache_size": len(coordinator.data.barcode_cache),
+        "orders": [
+            {
+                "status": o.status,
+                "updated": o.updated_at.isoformat(),
+                "shorted": len(o.shorted),
+                "substitutions": len(o.substitutions),
+            }
+            for o in coordinator.data.orders
+        ],
+        "seen_emails": len(coordinator.data.seen_emails),
         "items": [
             async_redact_data(item.as_dict(), TO_REDACT_ITEM)
             for item in coordinator.items

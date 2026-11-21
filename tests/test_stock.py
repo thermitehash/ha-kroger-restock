@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import timedelta
 from typing import Any
+from unittest.mock import patch
 
 from freezegun.api import FrozenDateTimeFactory
 from homeassistant.core import HomeAssistant
@@ -80,8 +81,11 @@ async def test_back_in_stock_pushes_and_notifies(
     assert fake_api.cart_calls == []
 
     fake_api.set_stock(COKE_ID, "LOW")
-    result = await check_stock(hass)
-    await hass.async_block_till_done()
+    with patch(
+        "custom_components.kroger_restock.coordinator.persistent_notification.async_create"
+    ) as notify:
+        result = await check_stock(hass)
+        await hass.async_block_till_done()
     assert result["back_in_stock"] == 1
     assert [p["item_id"] for p in result["pushed"]] == [item_id]
     item = coord(setup_integration).get_item(item_id)
@@ -90,8 +94,9 @@ async def test_back_in_stock_pushes_and_notifies(
     assert fake_api.cart_lines == [(COKE_ID, 1)]
     assert events[0].data["pushed"][0]["name"] == "Coca-Cola"
     # No notify targets configured -> persistent notification.
-    notifications = hass.states.async_all("persistent_notification")
-    assert notifications or hass.data.get("persistent_notification")
+    notify.assert_called_once()
+    assert notify.call_args.kwargs["title"] == "Back in stock"
+    assert "Coca-Cola" in notify.call_args.args[1]
 
     # A second check doesn't push again.
     await check_stock(hass)

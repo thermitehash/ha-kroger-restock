@@ -17,6 +17,8 @@ from homeassistant.helpers import config_entry_oauth2_flow
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.selector import (
     BooleanSelector,
+    ConfigEntrySelector,
+    ConfigEntrySelectorConfig,
     NumberSelector,
     NumberSelectorConfig,
     NumberSelectorMode,
@@ -35,14 +37,17 @@ from .application_credentials import KrogerOAuth2Implementation
 from .const import (
     CONF_DEBOUNCE_SECONDS,
     CONF_GIVE_UP_DAYS,
+    CONF_IMAP_ENTRY,
     CONF_IPP_URL,
     CONF_LEAD_TIME_DAYS,
     CONF_LOCATION_ID,
     CONF_LOCATION_NAME,
     CONF_MODALITY,
+    CONF_NOTIFY_ORDERS,
     CONF_NOTIFY_TARGETS,
     CONF_ORDER_DAYS,
     CONF_PAPER_WIDTH,
+    CONF_READD_SHORTED,
     CONF_RECEIPT_HOST,
     CONF_RECEIPT_PORT,
     CONF_SAVE_PDF,
@@ -52,7 +57,9 @@ from .const import (
     DEFAULT_GIVE_UP_DAYS,
     DEFAULT_LEAD_TIME_DAYS,
     DEFAULT_MODALITY,
+    DEFAULT_NOTIFY_ORDERS,
     DEFAULT_PAPER_WIDTH,
+    DEFAULT_READD_SHORTED,
     DEFAULT_RECEIPT_PORT,
     DEFAULT_SAVE_PDF,
     DEFAULT_STOCK_CHECK_HOURS,
@@ -273,7 +280,7 @@ class KrogerRestockOptionsFlow(OptionsFlow):
     ) -> ConfigFlowResult:
         """Choose what to change."""
         return self.async_show_menu(
-            step_id="init", menu_options=["settings", "store", "printing"]
+            step_id="init", menu_options=["settings", "store", "printing", "orders"]
         )
 
     async def async_step_settings(
@@ -461,3 +468,29 @@ class KrogerRestockOptionsFlow(OptionsFlow):
         return self.async_show_form(
             step_id="printing", data_schema=schema, errors=errors
         )
+
+    async def async_step_orders(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Order tracking from Kroger's emails via the IMAP integration."""
+        if user_input is not None:
+            data = {**self.config_entry.options, **user_input}
+            data[CONF_IMAP_ENTRY] = user_input.get(CONF_IMAP_ENTRY) or ""
+            return self.async_create_entry(data=data)
+        schema = vol.Schema(
+            {
+                vol.Optional(
+                    CONF_IMAP_ENTRY,
+                    description={"suggested_value": self._get(CONF_IMAP_ENTRY, None)},
+                ): ConfigEntrySelector(ConfigEntrySelectorConfig(integration="imap")),
+                vol.Required(
+                    CONF_NOTIFY_ORDERS,
+                    default=self._get(CONF_NOTIFY_ORDERS, DEFAULT_NOTIFY_ORDERS),
+                ): BooleanSelector(),
+                vol.Required(
+                    CONF_READD_SHORTED,
+                    default=self._get(CONF_READD_SHORTED, DEFAULT_READD_SHORTED),
+                ): BooleanSelector(),
+            }
+        )
+        return self.async_show_form(step_id="orders", data_schema=schema)

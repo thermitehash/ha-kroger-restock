@@ -182,6 +182,15 @@ class KrogerRestockCoordinator(DataUpdateCoordinator[RestockData]):
         self.async_set_updated_data(self.data)
 
     @callback
+    def mark_changed(self) -> None:
+        """Save and notify listeners after an outside change to ``data``."""
+        self._changed()
+
+    async def async_notify(self, title: str, message: str) -> None:
+        """Send a notification to the configured targets."""
+        await self._async_notify(title, message)
+
+    @callback
     def async_start(self) -> None:
         """Start the periodic stock check and the order-window tick."""
         interval = timedelta(hours=self.stock_check_hours)

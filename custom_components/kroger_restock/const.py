@@ -32,6 +32,11 @@ CONF_RECEIPT_PORT: Final = "receipt_port"
 CONF_PAPER_WIDTH: Final = "paper_width"
 CONF_IPP_URL: Final = "ipp_url"
 CONF_SAVE_PDF: Final = "save_pdf"
+CONF_IMAP_ENTRY: Final = "imap_entry"
+CONF_READD_SHORTED: Final = "readd_shorted"
+CONF_NOTIFY_ORDERS: Final = "notify_orders"
+DEFAULT_READD_SHORTED: Final = False
+DEFAULT_NOTIFY_ORDERS: Final = True
 
 DEFAULT_RECEIPT_PORT: Final = 9100
 DEFAULT_PAPER_WIDTH: Final = "80"
@@ -53,10 +58,11 @@ DEFAULT_LEAD_TIME_DAYS: Final = 1
 WEEKDAYS: Final = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
 
 STORAGE_VERSION: Final = 1
-STORAGE_MINOR_VERSION: Final = 2
+STORAGE_MINOR_VERSION: Final = 3
 
 EVENT_SCANNED: Final = f"{DOMAIN}_scanned"
 EVENT_BACK_IN_STOCK: Final = f"{DOMAIN}_back_in_stock"
+EVENT_ORDER_UPDATE: Final = f"{DOMAIN}_order_update"
 
 # Services
 SERVICE_SCAN_UPC: Final = "scan_upc"

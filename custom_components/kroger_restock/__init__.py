@@ -21,6 +21,7 @@ from .coordinator import (
     KrogerRestockCoordinator,
     async_create_auth_issue,
 )
+from .orders import OrderWatcher
 from .services import async_setup_services
 from .store import RestockStore
 
@@ -35,6 +36,7 @@ class KrogerRuntimeData:
 
     coordinator: KrogerRestockCoordinator
     api: KrogerApiClient
+    orders: OrderWatcher
 
 
 type KrogerConfigEntry = ConfigEntry[KrogerRuntimeData]
@@ -79,11 +81,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: KrogerConfigEntry) -> bo
     await coordinator.async_config_entry_first_refresh()
 
     ir.async_delete_issue(hass, DOMAIN, f"{ISSUE_AUTH_EXPIRED}_{entry.entry_id}")
-    entry.runtime_data = KrogerRuntimeData(coordinator=coordinator, api=api)
+    orders = OrderWatcher(hass, coordinator)
+    entry.runtime_data = KrogerRuntimeData(
+        coordinator=coordinator, api=api, orders=orders
+    )
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
     coordinator.async_start()
     entry.async_on_unload(coordinator.async_stop)
+    orders.async_start()
+    entry.async_on_unload(orders.async_stop)
     return True
 
 

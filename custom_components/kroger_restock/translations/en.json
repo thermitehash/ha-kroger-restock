@@ -72,7 +72,8 @@
         "menu_options": {
           "settings": "Settings",
           "store": "Change store",
-          "printing": "Printing"
+          "printing": "Printing",
+          "orders": "Order tracking"
         }
       },
       "settings": {
@@ -131,6 +132,20 @@
           "paper_width": "58 mm prints 32 columns; 80 mm prints 48.",
           "ipp_url": "For example ipp://printer.local/ipp/print. Leave empty to only save the PDF.",
           "save_pdf": "Keep a copy of every PDF in the media folder."
+        }
+      },
+      "orders": {
+        "title": "Order tracking",
+        "description": "Kroger's API can't read orders, so order status comes from Kroger's order emails. Set up the IMAP integration for the mailbox that receives them, then pick it here.",
+        "data": {
+          "imap_entry": "IMAP account",
+          "notify_orders": "Notify on order updates",
+          "readd_shorted": "Re-add shorted items automatically"
+        },
+        "data_description": {
+          "imap_entry": "The IMAP integration entry for the mailbox Kroger emails. Leave empty to turn order tracking off.",
+          "notify_orders": "Notify when an order is ready, out for delivery, cancelled, or missing items. Uses the notification targets from Settings.",
+          "readd_shorted": "When an email says items were out of stock or not picked, put the matching list items back and push them to the cart again. Off by default: matching uses product names and can be wrong."
         }
       }
     },
@@ -211,6 +226,18 @@
       "held": {
         "name": "Held for order day",
         "unit_of_measurement": "items"
+      },
+      "order": {
+        "name": "Kroger order",
+        "state": {
+          "none": "No current order",
+          "placed": "Placed",
+          "shopping": "Being shopped",
+          "ready": "Ready for pickup",
+          "out_for_delivery": "Out for delivery",
+          "completed": "Completed",
+          "cancelled": "Cancelled"
+        }
       }
     },
     "button": {

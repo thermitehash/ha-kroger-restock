@@ -23,6 +23,16 @@
       },
       "held": {
         "default": "mdi:calendar-clock"
+      },
+      "order": {
+        "default": "mdi:shopping",
+        "state": {
+          "ready": "mdi:store-check",
+          "out_for_delivery": "mdi:truck-delivery",
+          "completed": "mdi:check-circle",
+          "cancelled": "mdi:cancel",
+          "none": "mdi:shopping-outline"
+        }
       }
     },
     "button": {
