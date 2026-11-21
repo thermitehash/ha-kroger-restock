@@ -16,6 +16,7 @@ TO_REDACT_ENTRY = {
     "id_token",
     "unique_id",
     "location_name",
+    "location_address",
     "zip_code",
     "notify_targets",
 }

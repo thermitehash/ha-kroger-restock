@@ -11,6 +11,7 @@ from homeassistant.config_entries import (
     ConfigEntry,
     ConfigFlowResult,
     OptionsFlow,
+    OptionsFlowWithReload,
 )
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import config_entry_oauth2_flow
@@ -41,6 +42,7 @@ from .const import (
     CONF_IMAP_ENTRY,
     CONF_IPP_URL,
     CONF_LEAD_TIME_DAYS,
+    CONF_LOCATION_ADDRESS,
     CONF_LOCATION_ID,
     CONF_LOCATION_NAME,
     CONF_MODALITY,
@@ -48,7 +50,6 @@ from .const import (
     CONF_NOTIFY_TARGETS,
     CONF_ORDER_DAYS,
     CONF_PAPER_WIDTH,
-    CONF_READD_SHORTED,
     CONF_RECEIPT_HOST,
     CONF_RECEIPT_PORT,
     CONF_SAVE_PDF,
@@ -60,7 +61,6 @@ from .const import (
     DEFAULT_MODALITY,
     DEFAULT_NOTIFY_ORDERS,
     DEFAULT_PAPER_WIDTH,
-    DEFAULT_READD_SHORTED,
     DEFAULT_RECEIPT_PORT,
     DEFAULT_SAVE_PDF,
     DEFAULT_STOCK_CHECK_HOURS,
@@ -227,7 +227,8 @@ class KrogerRestockFlowHandler(
                 data={
                     **self._oauth_data,
                     CONF_LOCATION_ID: self._location.location_id,
-                    CONF_LOCATION_NAME: self._location.label,
+                    CONF_LOCATION_NAME: self._location.name,
+                    CONF_LOCATION_ADDRESS: self._location.address or "",
                     CONF_MODALITY: user_input[CONF_MODALITY],
                 },
             )
@@ -248,13 +249,25 @@ class KrogerRestockFlowHandler(
         """Start re-auth when the refresh token stops working."""
         return await self.async_step_reauth_confirm()
 
+    async def async_step_user(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Explain the sign-in before starting it.
+
+        On phones, the Companion app and the browser hand off during Kroger's
+        sign-in and the flow often gets lost, so we recommend a computer.
+        """
+        if user_input is None:
+            return self.async_show_form(step_id="user")
+        return await self.async_step_pick_implementation()
+
     async def async_step_reauth_confirm(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Confirm re-auth."""
         if user_input is None:
             return self.async_show_form(step_id="reauth_confirm")
-        return await self.async_step_user()
+        return await self.async_step_pick_implementation()
 
 
 def _notify_options(hass: HomeAssistant) -> list[str]:
@@ -264,7 +277,7 @@ def _notify_options(hass: HomeAssistant) -> list[str]:
     )
 
 
-class KrogerRestockOptionsFlow(OptionsFlow):
+class KrogerRestockOptionsFlow(OptionsFlowWithReload):
     """Change the store, modality and behaviour settings."""
 
     def __init__(self) -> None:
@@ -396,11 +409,16 @@ class KrogerRestockOptionsFlow(OptionsFlow):
         """Pick one store from the results."""
         if user_input is not None:
             location = self._locations[user_input[CONF_LOCATION_ID]]
+            # The entry title follows the store; entity IDs don't change.
+            self.hass.config_entries.async_update_entry(
+                self.config_entry, title=location.name
+            )
             return self.async_create_entry(
                 data={
                     **self.config_entry.options,
                     CONF_LOCATION_ID: location.location_id,
-                    CONF_LOCATION_NAME: location.label,
+                    CONF_LOCATION_NAME: location.name,
+                    CONF_LOCATION_ADDRESS: location.address or "",
                 }
             )
         return self.async_show_form(
@@ -490,10 +508,6 @@ class KrogerRestockOptionsFlow(OptionsFlow):
                 vol.Required(
                     CONF_NOTIFY_ORDERS,
                     default=self._get(CONF_NOTIFY_ORDERS, DEFAULT_NOTIFY_ORDERS),
-                ): BooleanSelector(),
-                vol.Required(
-                    CONF_READD_SHORTED,
-                    default=self._get(CONF_READD_SHORTED, DEFAULT_READD_SHORTED),
                 ): BooleanSelector(),
                 vol.Optional(
                     CONF_EXTRA_SENDER_DOMAINS,

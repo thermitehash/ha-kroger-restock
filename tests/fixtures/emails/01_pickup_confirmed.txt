@@ -1,0 +1,30 @@
+| Your pickup order will be ready on Mar 4, 2027 between 4:00pm and 5:00pm. | View in your browser |
+| |
+| Thanks for Your Pickup Order |
+| Review Order |
+| |
+| Hey Alex, |
+| We received your pickup order. We'll send you a reminder on the day your order is scheduled for pickup. |
+| |
+| PICKUP DATE: Thursday - Mar 4, 2027 between 4:00pm and 5:00pm |
+| |
+| PICKUP LOCATION: 100 Main St Anytown OH 45000 |
+| |
+| NUMBER OF ITEMS: 12 |
+| |
+| ORDER NUMBER: 1111222233334444555 |
+| |
+| Payment Summary |
+| Estimated Subtotal | $50.00 |
+| |
+| Savings | -$2.50 |
+| |
+| Pickup Fee | $4.95 $0.00 |
+| |
+| Sales Tax | $1.25 |
+| |
+| Total* | $48.75 |
+| |
+| We'll notify you if substitutions are needed. You have control over substitutions. |
+| Need Help? Please contact us or see our FAQs. |
+| © 2026 The Kroger Co. |

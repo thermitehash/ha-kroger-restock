@@ -112,6 +112,16 @@ class KrogerRestockTodoList(KrogerRestockEntity, TodoListEntity):
         self._update_items()
         super()._handle_coordinator_update()
 
+    @property
+    def extra_state_attributes(self) -> dict[str, str | None]:
+        """Which store the list (stock, aisles, cart) refers to."""
+        coordinator = self.coordinator
+        return {
+            "store_name": coordinator.location_name,
+            "store_address": coordinator.location_address,
+            "location_id": coordinator.location_id,
+        }
+
     def _update_items(self) -> None:
         items: list[TodoItem] = []
         push_date = self.coordinator.next_push_date()

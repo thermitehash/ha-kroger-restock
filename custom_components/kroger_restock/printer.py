@@ -42,7 +42,7 @@ def build(
     coordinator: KrogerRestockCoordinator, now: datetime | None = None
 ) -> PrintDocument:
     """Build the shared layout from the current list."""
-    store = coordinator.location_name or coordinator.config_entry.title
+    store = coordinator.location_label or coordinator.config_entry.title
     return build_document(coordinator.items, store, now or dt_util.now())
 
 

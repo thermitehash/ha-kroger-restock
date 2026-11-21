@@ -19,6 +19,7 @@ OAUTH2_SCOPES: Final = (SCOPE_PRODUCT, SCOPE_CART, SCOPE_PROFILE)
 # Config entry data / options keys
 CONF_LOCATION_ID: Final = "location_id"
 CONF_LOCATION_NAME: Final = "location_name"
+CONF_LOCATION_ADDRESS: Final = "location_address"
 CONF_ZIP_CODE: Final = "zip_code"
 CONF_MODALITY: Final = "modality"
 CONF_DEBOUNCE_SECONDS: Final = "debounce_seconds"
@@ -73,6 +74,7 @@ SERVICE_SYNC: Final = "sync"
 SERVICE_READD_ITEM: Final = "readd_item"
 SERVICE_CHECK_STOCK: Final = "check_stock"
 SERVICE_PRINT_LIST: Final = "print_list"
+SERVICE_MARK_CART_RECEIVED: Final = "mark_cart_received"
 
 PRINT_RECEIPT: Final = "receipt"
 PRINT_PDF: Final = "pdf"

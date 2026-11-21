@@ -107,19 +107,33 @@ class KrogerOrder:
     updated_at: datetime
     placed_at: datetime | None = None
     window: str | None = None
+    window_start: datetime | None = None
+    window_end: datetime | None = None
     modality: str | None = None
-    shorted: list[str] = field(default_factory=list)
-    substitutions: list[str] = field(default_factory=list)
+    # None = no email so far contained this information (unknown).
+    shorted: list[str] | None = None
+    substitutions: list[str] | None = None
     last_subject: str | None = None
     history: list[dict[str, str]] = field(default_factory=list)
     item_count: int | None = None
     total: float | None = None
+    fee: float | None = None
+    completed_at: datetime | None = None
+
+    _DATETIMES = (
+        "updated_at",
+        "placed_at",
+        "window_start",
+        "window_end",
+        "completed_at",
+    )
 
     def as_dict(self) -> dict[str, Any]:
         """Serialize for storage."""
         data = asdict(self)
-        data["updated_at"] = self.updated_at.isoformat()
-        data["placed_at"] = self.placed_at.isoformat() if self.placed_at else None
+        for key in self._DATETIMES:
+            value = getattr(self, key)
+            data[key] = value.isoformat() if value else None
         return data
 
     @classmethod
@@ -127,9 +141,9 @@ class KrogerOrder:
         """Deserialize, ignoring unknown keys."""
         known = {f.name for f in fields(cls)}
         values = {k: v for k, v in data.items() if k in known}
-        values["updated_at"] = dt_util.parse_datetime(values["updated_at"])
-        if values.get("placed_at"):
-            values["placed_at"] = dt_util.parse_datetime(values["placed_at"])
+        for key in cls._DATETIMES:
+            if values.get(key):
+                values[key] = dt_util.parse_datetime(values[key])
         return cls(**values)
 
 
@@ -146,8 +160,10 @@ class RestockData:
     barcode_cache: dict[str, str] = field(default_factory=dict)
     # Most recent first.
     orders: list[KrogerOrder] = field(default_factory=list)
-    # Keys of order emails already processed (IMAP entry + UID).
+    # Keys of order emails already processed (IMAP UID and Message-ID/content).
     seen_emails: list[str] = field(default_factory=list)
+    # Store the aisle/price/stock data on items refers to.
+    location_id: str | None = None
 
 
 class _VersionedStore(Store[dict[str, Any]]):
@@ -193,6 +209,7 @@ class RestockStore:
             barcode_cache=dict(raw.get("barcode_cache", {})),
             orders=[KrogerOrder.from_dict(row) for row in raw.get("orders", [])],
             seen_emails=list(raw.get("seen_emails", [])),
+            location_id=raw.get("location_id"),
         )
 
     async def async_save(self, data: RestockData) -> None:
@@ -214,4 +231,5 @@ class RestockStore:
             "barcode_cache": dict(data.barcode_cache),
             "orders": [order.as_dict() for order in data.orders],
             "seen_emails": list(data.seen_emails),
+            "location_id": data.location_id,
         }

@@ -9,13 +9,13 @@ from urllib.parse import parse_qs, urlparse
 from homeassistant.config_entries import SOURCE_USER
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
-from homeassistant.helpers import config_entry_oauth2_flow
+from homeassistant.helpers import config_entry_oauth2_flow, entity_registry as er
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 from pytest_homeassistant_custom_component.test_util.aiohttp import AiohttpClientMocker
 from pytest_homeassistant_custom_component.typing import ClientSessionGenerator
 
-from custom_components.kroger_restock.api import KrogerConnectionError
+from custom_components.kroger_restock.api import KrogerConnectionError, Location
 from custom_components.kroger_restock.application_credentials import (
     KrogerOAuth2Implementation,
 )
@@ -38,6 +38,16 @@ def flow_api(fake_api: FakeKrogerApi) -> Generator[FakeKrogerApi]:
         return_value=fake_api,
     ):
         yield fake_api
+
+
+async def start_flow(hass: HomeAssistant) -> dict:
+    """Start the flow and get past the 'use a computer' intro step."""
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": SOURCE_USER}
+    )
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "user"
+    return await hass.config_entries.flow.async_configure(result["flow_id"], {})
 
 
 async def _sign_in(
@@ -79,9 +89,7 @@ async def test_full_flow(
     aioclient_mock: AiohttpClientMocker,
     flow_api: FakeKrogerApi,
 ) -> None:
-    result = await hass.config_entries.flow.async_init(
-        DOMAIN, context={"source": SOURCE_USER}
-    )
+    result = await start_flow(hass)
     assert result["type"] is FlowResultType.EXTERNAL_STEP
     result = await _sign_in(
         hass, hass_client_no_auth, aioclient_mock, result["flow_id"], result["url"]
@@ -134,9 +142,7 @@ async def test_store_lookup_error(
     aioclient_mock: AiohttpClientMocker,
     flow_api: FakeKrogerApi,
 ) -> None:
-    result = await hass.config_entries.flow.async_init(
-        DOMAIN, context={"source": SOURCE_USER}
-    )
+    result = await start_flow(hass)
     result = await _sign_in(
         hass, hass_client_no_auth, aioclient_mock, result["flow_id"], result["url"]
     )
@@ -155,9 +161,7 @@ async def test_already_configured(
     flow_api: FakeKrogerApi,
     config_entry: MockConfigEntry,
 ) -> None:
-    result = await hass.config_entries.flow.async_init(
-        DOMAIN, context={"source": SOURCE_USER}
-    )
+    result = await start_flow(hass)
     result = await _sign_in(
         hass, hass_client_no_auth, aioclient_mock, result["flow_id"], result["url"]
     )
@@ -173,9 +177,7 @@ async def test_profile_error_aborts(
     flow_api: FakeKrogerApi,
 ) -> None:
     flow_api.async_get_profile_id = AsyncMock(side_effect=KrogerConnectionError("x"))  # type: ignore[method-assign]
-    result = await hass.config_entries.flow.async_init(
-        DOMAIN, context={"source": SOURCE_USER}
-    )
+    result = await start_flow(hass)
     result = await _sign_in(
         hass, hass_client_no_auth, aioclient_mock, result["flow_id"], result["url"]
     )
@@ -253,15 +255,50 @@ async def test_options_settings(
 
 
 async def test_options_change_store(
-    hass: HomeAssistant, setup_integration: MockConfigEntry, fake_api: FakeKrogerApi
+    hass: HomeAssistant,
+    setup_integration: MockConfigEntry,
+    fake_api: FakeKrogerApi,
+    entity_registry: er.EntityRegistry,
 ) -> None:
+    """Changing the store takes effect without reinstalling."""
     from custom_components.kroger_restock.api import Location
 
+    from .helpers import make_product
+
+    # An item scanned at the original store: aisle 7, in stock.
+    fake_api.add(make_product("0004900002891", "Coca-Cola", aisle="7", stock="HIGH"))
+    await hass.services.async_call(
+        DOMAIN, "scan_upc", {"upc": "049000028911"}, blocking=True
+    )
+    entity_ids = sorted(
+        e.entity_id
+        for e in er.async_entries_for_config_entry(
+            entity_registry, setup_integration.entry_id
+        )
+    )
+    old_coordinator = setup_integration.runtime_data.coordinator
+
+    new_store = "02100123"
     fake_api.locations = [
         Location(
-            location_id="02100123", name="Kroger Uptown", city="Columbus", state="OH"
+            location_id=new_store,
+            name="Kroger Uptown",
+            address_line="200 High St",
+            city="Columbus",
+            state="OH",
+            zip_code="43215",
         )
     ]
+    fake_api.store_products[new_store] = {
+        "0004900002891": make_product(
+            "0004900002891",
+            "Coca-Cola",
+            aisle="3",
+            aisle_description="BEVERAGES",
+            stock="LOW",
+        )
+    }
+
     result = await hass.config_entries.options.async_init(setup_integration.entry_id)
     result = await hass.config_entries.options.async_configure(
         result["flow_id"], {"next_step_id": "store"}
@@ -274,16 +311,87 @@ async def test_options_change_store(
         result["flow_id"], {"zip_code": "45202"}
     )
     assert result["step_id"] == "pick_store"
+    # The picker shows the street address next to Kroger's store name.
+    selector = result["data_schema"].schema["location_id"]
+    assert selector.config["options"][0]["label"] == (
+        "Kroger Uptown — 200 High St, Columbus, OH 43215"
+    )
     result = await hass.config_entries.options.async_configure(
-        result["flow_id"], {"location_id": "02100123"}
+        result["flow_id"], {"location_id": new_store}
     )
     assert result["type"] is FlowResultType.CREATE_ENTRY
     await hass.async_block_till_done()
+
+    # Reloaded with the new location ID; title follows the store.
     coordinator = setup_integration.runtime_data.coordinator
-    assert coordinator.location_id == "02100123"
-    assert coordinator.location_name == "Kroger Uptown — Columbus, OH"
-    # Existing options are kept.
-    assert setup_integration.options["debounce_seconds"] == 3.0
+    assert coordinator is not old_coordinator
+    assert coordinator.location_id == new_store
+    assert setup_integration.title == "Kroger Uptown"
+    assert setup_integration.options["debounce_seconds"] == 3.0  # others kept
+
+    # Per-store data was cleared and re-read from the new store.
+    item = coordinator.active_items[0]
+    assert item.aisle_number == "3"
+    assert item.stock_level == "LOW"
+    assert coordinator.data.location_id == new_store
+    assert len(fake_api.cart_lines) == 1  # revalidation never pushes
+
+    # Same entities, same IDs; the to-do list shows the new store.
+    assert (
+        sorted(
+            e.entity_id
+            for e in er.async_entries_for_config_entry(
+                entity_registry, setup_integration.entry_id
+            )
+        )
+        == entity_ids
+    )
+    todo = hass.states.get("todo.kroger_test_store")
+    assert todo.attributes["store_name"] == "Kroger Uptown"
+    assert todo.attributes["store_address"] == "200 High St, Columbus, OH 43215"
+    assert todo.attributes["location_id"] == new_store
+
+
+async def test_token_refresh_does_not_reload(
+    hass: HomeAssistant, setup_integration: MockConfigEntry
+) -> None:
+    """Token refreshes rewrite the entry's data; that must not reload it."""
+    coordinator = setup_integration.runtime_data.coordinator
+    hass.config_entries.async_update_entry(
+        setup_integration,
+        data={
+            **setup_integration.data,
+            "token": {**setup_integration.data["token"], "access_token": "new"},
+        },
+    )
+    await hass.async_block_till_done()
+    assert setup_integration.runtime_data.coordinator is coordinator
+
+
+@pytest.mark.usefixtures("setup_credentials")
+async def test_store_address_backfilled_for_old_entries(
+    hass: HomeAssistant, config_entry: MockConfigEntry, patch_api: FakeKrogerApi
+) -> None:
+    """Entries from before 0.7 get the store address looked up once."""
+    data = dict(config_entry.data)
+    data.pop("location_address")
+    data["location_name"] = "Kroger Test Store — 1 Main St, Cincinnati, OH"
+    hass.config_entries.async_update_entry(config_entry, data=data)
+    patch_api.locations[0] = Location(
+        location_id=LOCATION_ID,
+        name="Kroger Test Store",
+        address_line="1 Main St",
+        city="Cincinnati",
+        state="OH",
+        zip_code="45202",
+    )
+    assert await hass.config_entries.async_setup(config_entry.entry_id)
+    await hass.async_block_till_done()
+    assert patch_api.location_calls == [LOCATION_ID]
+    assert config_entry.data["location_name"] == "Kroger Test Store"
+    assert config_entry.data["location_address"] == "1 Main St, Cincinnati, OH 45202"
+    todo = hass.states.get("todo.kroger_test_store")
+    assert todo.attributes["store_address"] == "1 Main St, Cincinnati, OH 45202"
 
 
 @pytest.mark.usefixtures("setup_credentials")

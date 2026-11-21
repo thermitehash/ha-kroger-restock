@@ -59,11 +59,20 @@ class Location:
     zip_code: str | None = None
 
     @property
+    def address(self) -> str | None:
+        """Street address, e.g. '100 Main St, Anytown, OH 45000'."""
+        region = " ".join(p for p in (self.state, self.zip_code) if p)
+        parts = [p for p in (self.address_line, self.city, region) if p]
+        return ", ".join(parts) or None
+
+    @property
     def label(self) -> str:
-        """Human-readable label for selectors."""
-        parts = [p for p in (self.address_line, self.city, self.state) if p]
-        address = ", ".join(parts)
-        return f"{self.name} — {address}" if address else self.name
+        """Name plus street address, for selectors.
+
+        Kroger's location names don't always match the city a store is in,
+        so the address is shown next to the name.
+        """
+        return f"{self.name} — {self.address}" if self.address else self.name
 
     @classmethod
     def from_api(cls, data: dict[str, Any]) -> Location:
@@ -275,10 +284,13 @@ class KrogerApiClient:
         Kroger documents products and locations with a client-credentials
         token. We try the user token first and switch for good if refused.
         """
-        if self.products_use_app_token and self._app_token is not None:
-            token = await self._app_token()
-        else:
-            token = await self._user_token()
+        use_app = self.products_use_app_token and self._app_token is not None
+        token = await (self._app_token() if use_app else self._user_token())  # type: ignore[misc]
+        _LOGGER.debug(
+            "GET %s using %s token",
+            path,
+            "client-credentials" if use_app else "user",
+        )
         response = await self._request(
             "GET", path, token, endpoint=endpoint, params=params
         )
@@ -295,6 +307,7 @@ class KrogerApiClient:
             response.release()
             self.products_use_app_token = True
             token = await self._app_token()
+            _LOGGER.debug("GET %s retrying with client-credentials token", path)
             response = await self._request(
                 "GET", path, token, endpoint=endpoint, params=params
             )
@@ -311,6 +324,19 @@ class KrogerApiClient:
         )
         _raise_for_status(status, body, user_call=not self.products_use_app_token)
         return [Location.from_api(row) for row in body.get("data") or []]
+
+    async def async_get_location(self, location_id: str) -> Location | None:
+        """Look up one store by its location ID."""
+        status, body = await self._catalog_request(
+            f"/locations/{location_id}", {}, endpoint="locations"
+        )
+        if status in (HTTPStatus.NOT_FOUND, HTTPStatus.BAD_REQUEST):
+            return None
+        _raise_for_status(status, body, user_call=not self.products_use_app_token)
+        data = body.get("data")
+        if isinstance(data, list):
+            data = data[0] if data else None
+        return Location.from_api(data) if data else None
 
     async def async_get_product(
         self, product_id: str, location_id: str

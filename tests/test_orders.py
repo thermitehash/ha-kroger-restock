@@ -29,9 +29,15 @@ from .helpers import FakeKrogerApi, make_product
 from .test_order_email import (
     CHANGES_TEXT,
     CONFIRMED_TEXT,
+    DELIVERY_ORDER_NUMBER,
+    DELIVERY_TEXT,
+    DEVELOPER_SENDER,
+    DEVELOPER_TEXT,
+    INSTACART_RECEIPT_TEXT,
     KROGER_SENDER,
     ORDER_NUMBER,
     READY_HTML,
+    READY_TEXT,
     RECEIPT_TEXT,
     SHORTED_HTML,
     SUBJECTS,
@@ -88,12 +94,17 @@ async def tracking(
     imap_entry: MockConfigEntry,
     mailbox: dict[str, str],
 ) -> MockConfigEntry:
-    hass.config_entries.async_update_entry(
-        setup_integration,
-        options={**setup_integration.options, "imap_entry": imap_entry.entry_id},
-    )
-    await hass.async_block_till_done()
+    await set_options(hass, setup_integration, imap_entry=imap_entry.entry_id)
     return setup_integration
+
+
+async def set_options(
+    hass: HomeAssistant, entry: MockConfigEntry, **options: Any
+) -> None:
+    """Change options and reload, like finishing the options flow does."""
+    hass.config_entries.async_update_entry(entry, options={**entry.options, **options})
+    await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done()
 
 
 _uid = 0
@@ -149,6 +160,13 @@ async def test_order_lifecycle(
     assert state.attributes["modality"] == "pickup"
     assert state.attributes["item_count"] == 12
     assert state.attributes["total"] == 48.75
+    assert state.attributes["fee"] == 0.0
+    # Store-local window, interpreted in HA's time zone.
+    assert state.attributes["window_start"].startswith("2027-03-04T16:00:00")
+    assert state.attributes["window_end"].startswith("2027-03-04T17:00:00")
+    # No item data in Kroger's emails: unknown, so the attributes are absent.
+    assert "shorted_items" not in state.attributes
+    assert "substitutions" not in state.attributes
 
     await deliver(hass, imap_entry, mailbox, SUBJECTS["ready"], READY_HTML)
     state = hass.states.get(SENSOR)
@@ -202,6 +220,7 @@ async def test_sensor_shows_none_after_finished_order_ages(
     freezer: FrozenDateTimeFactory,
 ) -> None:
     await deliver(hass, imap_entry, mailbox, SUBJECTS["confirmed"], CONFIRMED_TEXT)
+    await deliver(hass, imap_entry, mailbox, SUBJECTS["ready"], READY_HTML)
     await deliver(hass, imap_entry, mailbox, SUBJECTS["receipt"], RECEIPT_TEXT)
     assert hass.states.get(SENSOR).state == "completed"
     freezer.tick(timedelta(days=3))
@@ -250,7 +269,13 @@ async def test_unnumbered_update_applies_to_active_order(
     mailbox: dict[str, str],
 ) -> None:
     await deliver(hass, imap_entry, mailbox, "Thanks for your order!", PLACED_TEXT)
-    await deliver(hass, imap_entry, mailbox, "Changes to your order", CHANGES_TEXT)
+    await deliver(
+        hass,
+        imap_entry,
+        mailbox,
+        "Changes to your order",
+        CHANGES_TEXT.replace(" 112233445566", ""),
+    )
     state = hass.states.get(SENSOR)
     assert state.state == "placed"  # changes email doesn't move the status
     assert state.attributes["shorted_items"] == [
@@ -328,40 +353,35 @@ async def test_shorted_items_matched_and_notified(
     assert len(fake_api.cart_calls) == 2  # nothing re-pushed
 
 
-async def test_shorted_items_readded_when_enabled(
+async def test_shorted_items_never_readded_automatically(
     hass: HomeAssistant,
     tracking: MockConfigEntry,
     imap_entry: MockConfigEntry,
     mailbox: dict[str, str],
     fake_api: FakeKrogerApi,
 ) -> None:
+    """Auto re-add is disabled entirely, even if an old option is still set."""
     calls = async_mock_service(hass, "notify", "mobile_app_pixel")
-    hass.config_entries.async_update_entry(
+    await set_options(
+        hass,
         tracking,
-        options={
-            **tracking.options,
-            "readd_shorted": True,
-            "notify_targets": ["notify.mobile_app_pixel"],
-        },
+        readd_shorted=True,  # left over from v0.6.0
+        notify_targets=["notify.mobile_app_pixel"],
     )
-    await hass.async_block_till_done()
     ids = await setup_cart(hass, fake_api)
-    coordinator = tracking.runtime_data.coordinator
-    await coordinator.async_set_received(ids["Coca-Cola Classic Soda"])
-    fake_api.set_stock("0001111000101", "TEMPORARILY_OUT_OF_STOCK")
-
+    events = async_capture_events(hass, EVENT_ORDER_UPDATE)
     await deliver(
         hass, imap_entry, mailbox, "Your order is ready for pickup!", SHORTED_HTML
     )
-    eggs = coordinator.get_item(ids["Simple Truth Organic Large Brown Eggs"])
-    coke = coordinator.get_item(ids["Coca-Cola Classic Soda"])
-    assert eggs.status is ItemStatus.WAITING  # out of stock now: waits
-    assert coke.status is ItemStatus.IN_CART  # pushed again
-    assert fake_api.cart_lines[-1] == ("0004900002891", 1)
-    assert len(fake_api.cart_lines) == 3
+    coordinator = tracking.runtime_data.coordinator
+    assert all(
+        coordinator.get_item(i).status is ItemStatus.IN_CART for i in ids.values()
+    )
+    assert len(fake_api.cart_lines) == 2  # nothing pushed again
+    assert events[0].data["readded_item_ids"] == []
+    assert len(events[0].data["shorted_item_ids"]) == 2
     assert len(calls) == 1
-    assert calls[0].data["title"] == "Kroger order ready for pickup"
-    assert "Added back to your list" in calls[0].data["message"]
+    assert "Uncheck them on the list" in calls[0].data["message"]
 
 
 async def test_tracking_off_without_imap_entry(
@@ -387,13 +407,14 @@ async def test_options_orders_step(
         {
             "imap_entry": imap_entry.entry_id,
             "notify_orders": False,
-            "readd_shorted": True,
+            "extra_sender_domains": " ralphsmail.com ",
         },
     )
     assert result["type"] == "create_entry"
     await hass.async_block_till_done()
     assert setup_integration.options["imap_entry"] == imap_entry.entry_id
-    assert setup_integration.options["readd_shorted"] is True
+    assert "readd_shorted" not in setup_integration.options
+    assert setup_integration.options["extra_sender_domains"] == "ralphsmail.com"
     assert setup_integration.runtime_data.orders.imap_entry_id == imap_entry.entry_id
 
 
@@ -407,3 +428,176 @@ async def test_storage_migrates_to_1_3(hass: HomeAssistant, hass_storage) -> Non
     data = await RestockStore(hass, "mig").async_load()
     assert data.orders == []
     assert data.seen_emails == []
+
+
+async def test_delivery_placed_then_completed_by_instacart_receipt(
+    hass: HomeAssistant,
+    tracking: MockConfigEntry,
+    imap_entry: MockConfigEntry,
+    mailbox: dict[str, str],
+) -> None:
+    await deliver(
+        hass, imap_entry, mailbox, SUBJECTS["delivery_confirmed"], DELIVERY_TEXT
+    )
+    state = hass.states.get(SENSOR)
+    assert state.state == "placed"
+    assert state.attributes["order_number"] == DELIVERY_ORDER_NUMBER
+    assert state.attributes["modality"] == "delivery"
+    assert state.attributes["fee"] == 3.99
+    # The delivery address is never stored.
+    assert "1 Example Way" not in str(state.attributes)
+    assert "1 Example Way" not in str(tracking.runtime_data.coordinator.data.orders)
+
+    await deliver(
+        hass,
+        imap_entry,
+        mailbox,
+        SUBJECTS["instacart_receipt"],
+        INSTACART_RECEIPT_TEXT,
+    )
+    assert hass.states.get(SENSOR).state == "completed"
+    assert hass.states.get(SENSOR).attributes["modality"] == "delivery"
+
+
+async def test_developer_verification_email_ignored(
+    hass: HomeAssistant,
+    tracking: MockConfigEntry,
+    imap_entry: MockConfigEntry,
+    mailbox: dict[str, str],
+) -> None:
+    events = async_capture_events(hass, EVENT_ORDER_UPDATE)
+    await deliver(
+        hass,
+        imap_entry,
+        mailbox,
+        SUBJECTS["developer"],
+        DEVELOPER_TEXT,
+        sender=DEVELOPER_SENDER,
+    )
+    assert events == []
+    assert tracking.runtime_data.coordinator.data.seen_emails == []  # never read
+
+
+async def test_receipt_completes_most_recent_ready_order_only(
+    hass: HomeAssistant,
+    tracking: MockConfigEntry,
+    imap_entry: MockConfigEntry,
+    mailbox: dict[str, str],
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    """Fixture 10: two open orders from two household members."""
+    sam_text = CONFIRMED_TEXT.replace(ORDER_NUMBER, "5555666677778888999").replace(
+        "Alex", "Sam"
+    )
+    sam_ready = READY_TEXT.replace(ORDER_NUMBER, "5555666677778888999")
+    await deliver(hass, imap_entry, mailbox, SUBJECTS["confirmed"], CONFIRMED_TEXT)
+    freezer.tick(timedelta(minutes=5))
+    await deliver(hass, imap_entry, mailbox, "Pickup Order Confirmed, Sam", sam_text)
+    freezer.tick(timedelta(minutes=5))
+    await deliver(hass, imap_entry, mailbox, SUBJECTS["ready"], sam_ready)
+
+    await deliver(hass, imap_entry, mailbox, SUBJECTS["receipt"], RECEIPT_TEXT)
+    orders = {
+        o.order_number: o.status for o in tracking.runtime_data.coordinator.data.orders
+    }
+    # Only Sam's order was ready, so only it completes; Alex's stays placed.
+    assert orders == {"5555666677778888999": "completed", ORDER_NUMBER: "placed"}
+
+
+async def test_receipt_ignores_ready_orders_older_than_a_day(
+    hass: HomeAssistant,
+    tracking: MockConfigEntry,
+    imap_entry: MockConfigEntry,
+    mailbox: dict[str, str],
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    await deliver(hass, imap_entry, mailbox, SUBJECTS["confirmed"], CONFIRMED_TEXT)
+    await deliver(hass, imap_entry, mailbox, SUBJECTS["ready"], READY_TEXT)
+    freezer.tick(timedelta(hours=25))
+    await deliver(hass, imap_entry, mailbox, SUBJECTS["receipt"], RECEIPT_TEXT)
+    assert hass.states.get(SENSOR).state == "ready"
+
+
+async def test_same_email_in_another_folder_is_not_processed_twice(
+    hass: HomeAssistant,
+    tracking: MockConfigEntry,
+    imap_entry: MockConfigEntry,
+    mailbox: dict[str, str],
+) -> None:
+    """UIDs change when mail moves folder; content/Message-ID keys catch it."""
+    events = async_capture_events(hass, EVENT_ORDER_UPDATE)
+    when = dt_util.utcnow()
+    for uid in ("10", "77"):
+        mailbox[uid] = CONFIRMED_TEXT
+        hass.bus.async_fire(
+            "imap_content",
+            {
+                "entry_id": imap_entry.entry_id,
+                "sender": KROGER_SENDER,
+                "subject": SUBJECTS["confirmed"],
+                "uid": uid,
+                "date": when,
+                "headers": {"Message-ID": ["<abc@e.krogermail.com>"]},
+            },
+        )
+        await hass.async_block_till_done()
+    assert len(events) == 1
+
+
+async def test_completed_order_asks_to_mark_received(
+    hass: HomeAssistant,
+    tracking: MockConfigEntry,
+    imap_entry: MockConfigEntry,
+    mailbox: dict[str, str],
+    fake_api: FakeKrogerApi,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    calls = async_mock_service(hass, "notify", "mobile_app_pixel")
+    await set_options(hass, tracking, notify_targets=["notify.mobile_app_pixel"])
+    ids = await setup_cart(hass, fake_api)
+    coordinator = tracking.runtime_data.coordinator
+    freezer.tick(timedelta(minutes=1))
+    await deliver(hass, imap_entry, mailbox, SUBJECTS["confirmed"], CONFIRMED_TEXT)
+    freezer.tick(timedelta(minutes=1))
+    late = await hass.services.async_call(  # added after the order was placed
+        DOMAIN,
+        "add_item",
+        {"name": "unobtainium"},
+        blocking=True,
+        return_response=True,
+    )
+    await deliver(hass, imap_entry, mailbox, SUBJECTS["ready"], READY_TEXT)
+    calls.clear()
+    await deliver(hass, imap_entry, mailbox, SUBJECTS["receipt"], RECEIPT_TEXT)
+
+    # Never checked off automatically...
+    assert all(
+        coordinator.get_item(i).status is ItemStatus.IN_CART for i in ids.values()
+    )
+    # ...the user is asked instead, with a button.
+    assert len(calls) == 1
+    assert calls[0].data["title"] == "Kroger order picked up"
+    assert calls[0].data["message"] == "Mark the 2 in-cart items received?"
+    action = calls[0].data["data"]["actions"][0]
+    assert action["title"] == "Mark received"
+
+    hass.bus.async_fire("mobile_app_notification_action", {"action": action["action"]})
+    await hass.async_block_till_done()
+    assert all(
+        coordinator.get_item(i).status is ItemStatus.RECEIVED for i in ids.values()
+    )
+    assert coordinator.get_item(late["item_id"]).status is ItemStatus.UNMATCHED
+
+
+async def test_mark_cart_received_action(
+    hass: HomeAssistant, setup_integration: MockConfigEntry, fake_api: FakeKrogerApi
+) -> None:
+    ids = await setup_cart(hass, fake_api)
+    result = await hass.services.async_call(
+        DOMAIN, "mark_cart_received", {}, blocking=True, return_response=True
+    )
+    assert result == {"marked": 2}
+    coordinator = setup_integration.runtime_data.coordinator
+    assert all(
+        coordinator.get_item(i).status is ItemStatus.RECEIVED for i in ids.values()
+    )

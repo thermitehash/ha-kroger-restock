@@ -129,14 +129,28 @@ class KrogerOrderSensor(KrogerRestockEntity, SensorEntity):
                 {
                     "order_number": order.order_number,
                     "window": order.window,
+                    "window_start": order.window_start.isoformat()
+                    if order.window_start
+                    else None,
+                    "window_end": order.window_end.isoformat()
+                    if order.window_end
+                    else None,
                     "modality": order.modality,
                     "item_count": order.item_count,
                     "total": order.total,
+                    "fee": order.fee,
                     "updated": order.updated_at.isoformat(),
                     "placed": order.placed_at.isoformat() if order.placed_at else None,
-                    "shorted_items": order.shorted,
-                    "substitutions": order.substitutions,
+                    "completed": order.completed_at.isoformat()
+                    if order.completed_at
+                    else None,
                     "last_email": order.last_subject,
                 }
             )
+            # Experimental and usually unknown: only present when an email
+            # actually contained this information.
+            if order.shorted is not None:
+                attrs["shorted_items"] = order.shorted
+            if order.substitutions is not None:
+                attrs["substitutions"] = order.substitutions
         return attrs

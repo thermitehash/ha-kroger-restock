@@ -17,6 +17,7 @@ import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.kroger_restock.const import (
+    CONF_LOCATION_ADDRESS,
     CONF_LOCATION_ID,
     CONF_LOCATION_NAME,
     CONF_MODALITY,
@@ -66,7 +67,8 @@ def config_entry(hass: HomeAssistant) -> MockConfigEntry:
             "auth_implementation": DOMAIN,
             "token": token_data(),
             CONF_LOCATION_ID: LOCATION_ID,
-            CONF_LOCATION_NAME: "Kroger Test Store — 1 Main St, Cincinnati, OH",
+            CONF_LOCATION_NAME: "Kroger Test Store",
+            CONF_LOCATION_ADDRESS: "1 Main St, Cincinnati, OH 45202",
             CONF_MODALITY: "pickup",
         },
         options={"debounce_seconds": 3.0},

@@ -1,0 +1,9 @@
+We&apos;ll see you soon, Alex.&zwnj;&zwnj;&zwnj;&zwnj;&zwnj;&zwnj;&zwnj;&zwnj; View in your browser
+Pick up your order at 100 Main St Anytown OH 45000
+Alex, We&#39;ll See You Between
+4:00pm and 5:00pm
+<span style='font-weight:normal;'>PICK UP TODAY BETWEEN:</span><br><span style='font-weight:bold;'>4:00pm and 5:00pm</span>
+<span style='font-weight:normal;'>STORE ADDRESS:</span><br><span style='font-weight:bold;'>100 Main St Anytown OH 45000</span>
+<span style='font-weight:normal;'>ORDER NUMBER:</span><br><span style='font-weight:bold;'>1111222233334444555</span>
+What&apos;s Next for Your Pickup Order
+Pull into a pickup spot and select &quot;I&apos;m Here&quot; on our app or website.

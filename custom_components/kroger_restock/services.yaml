@@ -114,3 +114,10 @@ print_list:
       selector:
         config_entry:
           integration: kroger_restock
+
+mark_cart_received:
+  fields:
+    config_entry_id:
+      selector:
+        config_entry:
+          integration: kroger_restock

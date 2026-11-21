@@ -42,6 +42,7 @@ from .const import (
     CONF_DEBOUNCE_SECONDS,
     CONF_GIVE_UP_DAYS,
     CONF_LEAD_TIME_DAYS,
+    CONF_LOCATION_ADDRESS,
     CONF_LOCATION_ID,
     CONF_LOCATION_NAME,
     CONF_MODALITY,
@@ -161,6 +162,7 @@ class KrogerRestockCoordinator(DataUpdateCoordinator[RestockData]):
         self._product_cache: dict[str, tuple[float, Product | None]] = {}
         self._miss_cache: dict[str, float] = {}
         self._unsubs: list[CALLBACK_TYPE] = []
+        self._needs_revalidation = False
         self._check_task: asyncio.Task[Any] | None = None
         self._last_cycle: datetime | None = None
         self.data = RestockData()
@@ -169,8 +171,52 @@ class KrogerRestockCoordinator(DataUpdateCoordinator[RestockData]):
     # Setup and persistence
 
     async def async_load(self) -> None:
-        """Load persisted state."""
+        """Load persisted state, and handle a store change made in the options."""
         self.data = await self._store.async_load()
+        previous = self.data.location_id
+        if previous is not None and previous != self.location_id:
+            _LOGGER.info(
+                "Store changed (%s -> %s); clearing per-store aisle, price and "
+                "stock data",
+                previous,
+                self.location_id,
+            )
+            for item in self.data.items:
+                item.aisle_number = None
+                item.aisle_description = None
+                item.stock_level = None
+                item.price = None
+            self._needs_revalidation = True
+        self.data.location_id = self.location_id
+
+    async def async_revalidate_store_data(self) -> int:
+        """Re-read aisle, price and stock for active items at the current store.
+
+        Runs after a store change. Nothing is pushed; waiting/held items keep
+        their status until the next stock check. Returns items refreshed.
+        """
+        refreshed = 0
+        for item in list(self.active_items):
+            if not item.product_id:
+                continue
+            try:
+                product = await self._get_product(item.product_id)
+            except HomeAssistantError as err:
+                _LOGGER.debug("Revalidation failed for %s: %s", item.product_id, err)
+                continue
+            if product is None:
+                continue
+            async with self._lock:
+                item.aisle_number = product.aisle.number if product.aisle else None
+                item.aisle_description = (
+                    product.aisle.description if product.aisle else None
+                )
+                item.price = product.price
+                item.stock_level = product.stock_level
+            refreshed += 1
+        self._needs_revalidation = False
+        self._changed()
+        return refreshed
 
     async def _async_update_data(self) -> RestockData:
         """No polling in this phase; return current state."""
@@ -186,13 +232,46 @@ class KrogerRestockCoordinator(DataUpdateCoordinator[RestockData]):
         """Save and notify listeners after an outside change to ``data``."""
         self._changed()
 
-    async def async_notify(self, title: str, message: str) -> None:
+    async def async_notify(
+        self,
+        title: str,
+        message: str,
+        actions: list[dict[str, str]] | None = None,
+    ) -> None:
         """Send a notification to the configured targets."""
-        await self._async_notify(title, message)
+        await self._async_notify(title, message, actions)
+
+    def in_cart_items(self, before: datetime | None = None) -> list[ListItem]:
+        """In-cart items fully pushed (optionally pushed before ``before``)."""
+        return [
+            i
+            for i in self.data.items
+            if i.status == ItemStatus.IN_CART
+            and i.pushed_quantity >= i.quantity
+            and (before is None or (i.cart_pushed_at and i.cart_pushed_at <= before))
+        ]
+
+    async def async_mark_cart_received(self, before: datetime | None = None) -> int:
+        """Mark in-cart items received (after the user confirms an order arrived)."""
+        async with self._lock:
+            items = self.in_cart_items(before)
+            now = dt_util.utcnow()
+            for item in items:
+                item.status = ItemStatus.RECEIVED
+                item.received_at = now
+            if items:
+                self._changed()
+        return len(items)
 
     @callback
     def async_start(self) -> None:
         """Start the periodic stock check and the order-window tick."""
+        if self._needs_revalidation:
+            self.config_entry.async_create_background_task(
+                self.hass,
+                self.async_revalidate_store_data(),
+                "kroger_restock store revalidation",
+            )
         interval = timedelta(hours=self.stock_check_hours)
         self._unsubs.append(
             async_track_time_interval(
@@ -248,8 +327,26 @@ class KrogerRestockCoordinator(DataUpdateCoordinator[RestockData]):
 
     @property
     def location_name(self) -> str:
-        """Human-readable store name."""
-        return str(entry_option(self.config_entry, CONF_LOCATION_NAME, ""))
+        """Store name as Kroger calls it (e.g. a neighborhood, not the city)."""
+        name = str(entry_option(self.config_entry, CONF_LOCATION_NAME, ""))
+        # Entries made before 0.7 stored "Name — address" here.
+        return name.split(" — ", 1)[0]
+
+    @property
+    def location_address(self) -> str | None:
+        """Street address of the store."""
+        address = entry_option(self.config_entry, CONF_LOCATION_ADDRESS)
+        if address:
+            return str(address)
+        name = str(entry_option(self.config_entry, CONF_LOCATION_NAME, ""))
+        return name.split(" — ", 1)[1] if " — " in name else None
+
+    @property
+    def location_label(self) -> str:
+        """Name plus address, for printouts and pickers."""
+        if self.location_address:
+            return f"{self.location_name} — {self.location_address}"
+        return self.location_name
 
     @property
     def modality(self) -> str:
@@ -377,13 +474,34 @@ class KrogerRestockCoordinator(DataUpdateCoordinator[RestockData]):
         self, digits: str, candidates: Iterable[str]
     ) -> Product | None:
         """Try the cached mapping, then each candidate ID in order."""
+        candidates = list(candidates)
         cached_id = self.data.barcode_cache.get(digits)
+        _LOGGER.debug(
+            "Barcode %s: cached product %s, candidates in order %s",
+            digits,
+            cached_id or "none",
+            candidates,
+        )
         if cached_id:
             product = await self._get_product(cached_id)
+            _LOGGER.debug(
+                "Barcode %s: cached %s -> %s",
+                digits,
+                cached_id,
+                "hit" if product else "miss",
+            )
             if product is not None:
                 return product
-        for candidate in candidates:
+        for position, candidate in enumerate(candidates, start=1):
             product = await self._get_product(candidate)
+            _LOGGER.debug(
+                "Barcode %s: candidate %d/%d %s -> %s",
+                digits,
+                position,
+                len(candidates),
+                candidate,
+                "hit" if product else "miss",
+            )
             if product is not None:
                 if self.data.barcode_cache.get(digits) != product.product_id:
                     self.data.barcode_cache[digits] = product.product_id
@@ -948,10 +1066,23 @@ class KrogerRestockCoordinator(DataUpdateCoordinator[RestockData]):
             "kroger_restock notify",
         )
 
-    async def _async_notify(self, title: str, message: str) -> None:
-        """Send to each configured notify target, or a persistent notification."""
+    async def _async_notify(
+        self,
+        title: str,
+        message: str,
+        actions: list[dict[str, str]] | None = None,
+    ) -> None:
+        """Send to each configured notify target, or a persistent notification.
+
+        ``actions`` become actionable-notification buttons on mobile app
+        targets; the persistent notification explains the equivalent action.
+        """
         targets = self.notify_targets
         if not targets:
+            if actions:
+                message += (
+                    " (Use the kroger_restock.mark_cart_received action to do it.)"
+                )
             persistent_notification.async_create(
                 self.hass,
                 message,
@@ -963,11 +1094,14 @@ class KrogerRestockCoordinator(DataUpdateCoordinator[RestockData]):
             domain, _, service = target.partition(".")
             if not service:
                 domain, service = "notify", domain
+            payload: dict[str, Any] = {"title": title, "message": message}
+            if actions:
+                payload["data"] = {"actions": actions}
             try:
                 await self.hass.services.async_call(
                     domain,
                     service,
-                    {"title": title, "message": message},
+                    payload,
                     blocking=True,
                 )
             except HomeAssistantError as err:

@@ -176,6 +176,7 @@ async def test_diagnostics(
     assert entry["data"] == {
         "auth_implementation": DOMAIN,
         "location_id": "01400943",
+        "location_address": "**REDACTED**",
         "location_name": "**REDACTED**",
         "modality": "pickup",
         "token": "**REDACTED**",

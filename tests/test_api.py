@@ -201,7 +201,8 @@ async def test_locations(
     )
     locations = await client(hass).async_get_locations("45202")
     assert locations[0].location_id == LOCATION_ID
-    assert locations[0].label == "Kroger - Downtown — 1 Main St, Cincinnati, OH"
+    assert locations[0].label == "Kroger - Downtown — 1 Main St, Cincinnati, OH 45202"
+    assert locations[0].address == "1 Main St, Cincinnati, OH 45202"
     assert aioclient_mock.mock_calls[0][1].query["filter.zipCode.near"] == "45202"
 
 

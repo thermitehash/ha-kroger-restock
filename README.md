@@ -80,17 +80,30 @@ you've disabled the `my` integration, use
 
 ## 3. Add the integration
 
+> **Do this on a computer.** On a phone, the switch between the Home
+> Assistant app and the browser during Kroger's sign-in usually loses the
+> flow. After setup, everything works from the phone.
+
 1. **Settings → Devices & services → Add integration → Kroger Restock.**
 2. When asked for application credentials, enter the Client ID and Client
    Secret from step 1. (You can also add them first under
    **Settings → Application credentials**.)
 3. Sign in to your Kroger shopping account and approve access.
-4. Enter your ZIP code and pick your store. Stock levels, prices and aisles
-   come from this store.
+4. Enter your ZIP code and pick your store. Each store is listed with its
+   street address, because Kroger's store names don't always match the town
+   the store is in (a store can be named after a neighboring area). Stock
+   levels, prices and
+   aisles come from this store.
 5. Choose **Pickup** (default) or **Delivery**.
 
 You get a to-do list called **Grocery list** (entity ID based on your store
-name, e.g. `todo.kroger_downtown`), plus sensors and a **Sync now** button.
+name, e.g. `todo.kroger_downtown`), plus sensors and buttons. The list's
+`store_name`, `store_address` and `location_id` attributes show which store
+it refers to.
+
+**Changing store later** (Configure → Change store) takes effect right away,
+with no reinstall. The entry is renamed after the new store, aisle, price and
+stock data is re-read from it, and entity IDs stay the same.
 
 ## How the list works
 
@@ -243,6 +256,12 @@ Re-checks every waiting item now and pushes held items if you're inside the
 order window. Returns `checked`, `back_in_stock`, `pushed`, `held`,
 `still_waiting` and `held_pushed`.
 
+### `kroger_restock.mark_cart_received`
+
+Marks every in-cart item (fully pushed) as received. Use it after an order is
+picked up or delivered; the order-complete notification offers the same as a
+button. Returns `marked`.
+
 ### `kroger_restock.print_list`
 
 Prints the list. `target`: `receipt`, `pdf` or `both` (default). Returns
@@ -290,67 +309,96 @@ Kroger's public API can't read orders, so order status comes from the emails
 Kroger sends instead, read through Home Assistant's built-in
 [IMAP integration](https://www.home-assistant.io/integrations/imap/).
 
+### What Kroger actually emails
+
+Based on a year of real pickup orders (and one Instacart delivery), Kroger
+sends these, all from `email@e.krogermail.com`:
+
+| Email | Subject (roughly) | Status |
+| --- | --- | --- |
+| Pickup confirmed | "Pickup Order Confirmed, <name>" (older: "Order Confirmed, <name>") | `placed`, with window, item count, total, fee |
+| Delivery confirmed (Instacart) | "Order Confirmed, <name>": same subject as the older pickup email | `placed` (pickup vs delivery is told apart by the body) |
+| Ready for pickup | "Your Order is Ready for Pickup at <store address>" | `ready` |
+| Final receipt | "<name>, Here's Your Final Receipt…" (pickup) / "…Instacart Order." | `completed` |
+
+The first name differs when more than one household member orders; names are
+never used for matching. The final receipt has **no order number, items or
+totals**: it completes the most recent *ready* pickup order (or *placed*
+delivery order) from the last 24 hours, and is ignored otherwise.
+
+**Never seen in a year of emails:** substitution or out-of-stock notices,
+"order changed/cancelled", "out for delivery", "delivered", or any list of
+shorted items. Kroger most likely sends those as app notifications or texts.
+So `shopping`, `out_for_delivery` and `cancelled` are supported but
+**unverified**, and shorted-item/substitution parsing is **experimental**.
+
 ### Setup
 
 1. **Settings → Devices & services → Add integration → IMAP**, and sign in to
    the mailbox that gets your Kroger order emails. For Gmail, use an app
-   password. Tips:
-   - **Search** decides which messages trigger. The default (`UnSeen
-     UnDeleted`) works. To skip everything else, use for example
-     `UnDeleted FROM krogermail.com` (Kroger sends order emails from
-     `email@e.krogermail.com`).
-   - You don't need to turn on "message text" in the IMAP options: Kroger
-     Restock fetches the full message itself with `imap.fetch`.
-2. In **Kroger Restock → Configure → Order tracking**, pick that IMAP account.
-3. Optional settings on the same page:
-   - **Notify on order updates** (on by default): ready for pickup, out for
-     delivery, cancelled, and missing items, sent to your notification
-     targets.
-   - **Re-add shorted items automatically** (off by default): when an email
-     says items were out of stock or not picked, the matching list items go
-     back on the list: stock check, then pushed to the cart again for your
-     next order. Matching uses product names, so it's off until you trust it.
-     With it off, the notification lists what was missing and you uncheck
-     those items yourself.
+   password.
+2. **Pick the right folder.** Gmail files recent Kroger receipts under the
+   **Promotions** tab. Over IMAP that's still INBOX, but only until you
+   archive it, and a filter that skips the inbox moves it out entirely.
+   Reliable choices:
+   - **Folder `[Gmail]/All Mail`** with **Search** `FROM krogermail.com`, or
+   - a Gmail filter `from:e.krogermail.com` → apply label `Kroger`, and
+     **Folder `Kroger`** in the IMAP settings.
 
-Only mail from Kroger-family domains is read (krogermail.com, kroger.com,
-ralphs.com, fredmeyer.com, kingsoopers.com, harristeeter.com and the other
-banners); other mail in the mailbox is ignored. If your banner's emails come
-from a domain that isn't recognized, add it under **Extra sender domains**.
-Each email is processed once.
+   Relying on **INBOX** breaks as soon as you archive mail.
+3. You don't need to turn on "message text" in the IMAP options: Kroger
+   Restock fetches the full message with `imap.fetch`. Turning on "headers"
+   lets it dedupe by Message-ID; without it, it dedupes by sender, subject
+   and date.
+4. In **Kroger Restock → Configure → Order tracking**, pick that IMAP account.
+   - **Notify on order updates** (on by default): ready for pickup, cancelled,
+     and **order picked up / delivered**, which asks *"Mark the N in-cart
+     items received?"* with a **Mark received** button. Items are never
+     checked off automatically, because the receipt doesn't list them.
+   - **Extra senders**: only if your banner's order emails come from a
+     sender that isn't recognized (domains or full addresses).
 
-Tested with real Kroger pickup emails: **Pickup Order Confirmed** (placed,
-with window, item count and total), **Your Order is Ready for Pickup**
-(ready), and **Here's Your Final Receipt** (completed; it has no order
-number, so it completes the order in progress).
+Only order mail is read: `email@e.krogermail.com` and other Kroger-family
+domains. Kroger's developer-portal mail (`krogerapisupport@…`) and anything
+not from a Kroger sender is ignored. Each email is processed once, even if it
+moves folders.
 
 ### The order sensor
 
-`sensor.<store>_kroger_order` shows the current order: `placed`, `shopping`,
-`ready`, `out_for_delivery`, `completed`, `cancelled`, or `none`. A finished
-order stays visible for two days, then the sensor goes back to `none`.
+`sensor.<store>_kroger_order` shows the current order: `placed`, `ready`,
+`completed`, or `none`, plus the unverified `shopping`, `out_for_delivery`
+and `cancelled`. A finished order stays visible for two days, then the sensor
+goes back to `none`.
 
-Attributes: `order_number`, `window` (e.g. `Mar 4, 2027 4:00pm–5:00pm`, or
-`Today 4:00pm–5:00pm` from the ready email), `modality`, `item_count`, `total`
-(estimated, from the confirmation), `placed`, `updated`, `shorted_items`,
-`substitutions`, `last_email`, and `recent_orders` (the last five).
+Attributes: `order_number`, `window` (e.g. `Mar 4, 2027 4:00pm–5:00pm`),
+`window_start` / `window_end` (timestamps; the email's store-local times are
+read in Home Assistant's time zone), `modality` (`pickup`/`delivery`),
+`item_count`, `total` (estimated), `fee` (the actual fee: a struck-through
+`$4.95 $0.00` reads as 0.00), `placed`, `completed`, `updated`,
+`last_email`, and `recent_orders`.
+
+`shorted_items` and `substitutions` are **absent** unless an email actually
+contained that information (absent = unknown; an empty list = none).
+
+Delivery addresses are never stored or logged.
 
 ### Event: `kroger_restock_order_update`
 
 Fired for every order email that changes something. Data: `order_number`,
-`status`, `previous_status`, `window`, `modality`, `shorted` (names from this
-email), `shorted_item_ids` (shorted names matched to list items),
-`readded_item_ids`, `substitutions`, `subject`, `config_entry_id`.
+`status`, `previous_status`, `window`, `window_start`, `window_end`,
+`modality`, `shorted`, `shorted_item_ids`, `readded_item_ids` (always empty;
+automatic re-adding is disabled), `substitutions`, `subject`,
+`config_entry_id`.
 
 ### Limitations
 
-Parsing depends on the wording of Kroger's emails, which can change and
-differs a little between banners. Delivery emails, substitution emails and
-out-of-stock emails haven't been checked against real samples yet; those
-rules are best guesses. An email that can't be classified is
-ignored, and the sensor keeps its last state. If your emails aren't
-recognized, please open an issue with a redacted copy (remove names,
-addresses, order numbers and payment details) so the rules can be updated.
+- Parsing depends on Kroger's wording, which can change and may differ by
+  banner. An unrecognized email is ignored; the sensor keeps its last state.
+- **Automatic re-adding of shorted items is disabled** (the v0.6.0 option
+  is gone) until a real Kroger email with item-level shortage data turns up.
+- If your emails aren't recognized, open an issue describing the subject and
+  layout. Don't paste real emails: remove names, addresses, order numbers and
+  amounts.
 
 ## Printing
 
@@ -429,9 +477,13 @@ Import blueprint**, and paste
 
 ### ESPHome wall scanner
 
-An ESP32 with a GM65 or GM861 barcode module that scans straight to the list,
-with buzzer and LED feedback and an optional print button. See
-[`esphome/README.md`](esphome/README.md) for parts, wiring and setup.
+An M5Stack **AtomS3 Lite** on an **Atomic QRCode2 Base**: no soldering,
+continuous scanning, RGB LED feedback (green in cart, amber waiting, blue
+needs review, red unmatched), and the Atom's button prints (short press) or
+syncs (long press). A 3D-printable wall housing is in
+[`hardware/housing/`](hardware/housing/). See
+[`esphome/README.md`](esphome/README.md) for setup. The older ESP32 + GM65
+build is still there as an alternative.
 
 ### Example automations
 
@@ -485,8 +537,25 @@ These come from Kroger's public API:
   batches cart pushes. Call counts appear in diagnostics.
 - **Stock levels are Kroger's estimate.** Items with no stock data are treated
   as available.
+- **Existing cart contents can't be read.** Items already in your cart (added
+  in the Kroger app) aren't on the Home Assistant list, and scanning one adds
+  another.
+- **Setup sign-in needs a computer** (see step 3).
 - Items typed in the to-do UI or spoken through Assist are recorded with
   source `manual`; use `add_item` with `source: assist` to tag them yourself.
+
+## API verification status
+
+| Item | Status |
+| --- | --- |
+| OAuth URLs, HTTP Basic client auth, refresh grant, 30-minute tokens | Verified against Kroger's OpenAPI specs |
+| `profile.compact` scope | **Verified live** (HA 2026.11, Nov 2026: the entry's unique ID is the Kroger profile UUID) |
+| Cart body, 204 response, 13-digit UPC, PICKUP/DELIVERY | Verified against the specs |
+| Rate limits, `stockLevel` values | Verified against the specs |
+| Product lookup, stock level and cart add with live data | Not yet exercised live |
+| Whether a user token works for product calls | Unverified (the client-credentials fallback covers either answer; debug logs show which was used) |
+| Whether the cart accepts an out-of-stock UPC | Unknown (`tests/test_live_cart.py`, run locally). The integration never pushes out-of-stock items either way |
+| Refresh-token lifetime | Unknown |
 
 ## Troubleshooting
 
@@ -502,6 +571,10 @@ These come from Kroger's public API:
     logs:
       custom_components.kroger_restock: debug
   ```
+
+  Debug logs show, for each product call, whether the **user** or
+  **client-credentials** token was used, and, for each scan, every barcode
+  candidate tried in order with hit/miss.
 
 ## Development
 
@@ -520,10 +593,15 @@ node script/render_icons.js         # after editing assets/*.svg
 and the Validate workflow passes, the Release workflow tags and publishes it.
 A version that's already released is skipped.
 
+**Test environment:** CI runs the tests on Home Assistant 2026.10.4, the newest
+version `pytest-homeassistant-custom-component` supports so far, while the
+integration's minimum is 2026.11 (`hacs.json`). Bump the pinned test package
+once one for 2026.11 is out.
+
 `tests/test_live_cart.py` is an optional, manual check against the real API
 (it shows whether Kroger's cart accepts an out-of-stock UPC). It is skipped
 unless `KROGER_LIVE_*` environment variables are set, and it adds one unit to
-the real cart.
+the real cart. Run it locally, never in CI or a cloud session.
 
 ## Roadmap
 

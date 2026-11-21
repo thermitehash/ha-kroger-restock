@@ -50,5 +50,11 @@ loses amount/unit/category.
 
 - Read the GTIN out of GS1 Digital Link QR codes
   (`https://id.gs1.org/01/<gtin>/…`) instead of ignoring them.
-- Optionally mark in-cart items `received` when an order email says the
-  order was picked up or delivered.
+- ~~Mark in-cart items received after pickup~~: done in 0.7.0 as a
+  confirmation prompt (actionable notification + `mark_cart_received`); never
+  automatic, since receipts don't list items.
+- Re-enable automatic re-adding of shorted items once a real Kroger email
+  with item-level shortage or substitution data has been seen (disabled in
+  0.7.0; none exists in a year of sample mail).
+- "Already in cart" option for `scan_upc` / `add_item` (record items already
+  in the Kroger cart without pushing). Proposed, not approved.

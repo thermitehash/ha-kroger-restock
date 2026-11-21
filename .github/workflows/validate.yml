@@ -39,7 +39,7 @@ jobs:
       - run: ruff check .
 
   esphome:
-    name: ESPHome config
+    name: ESPHome configs
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -47,12 +47,29 @@ jobs:
         with:
           python-version: "3.13"
       - run: pip install esphome
-      - name: Validate kroger-scanner.yaml
+      - name: Validate both scanner configs
         working-directory: esphome
         run: |
           sed "s|PASTE-YOUR-GENERATED-KEY-HERE|$(openssl rand -base64 32)|" \
             secrets.example.yaml > secrets.yaml
+          esphome config kroger-scanner-atoms3.yaml > /dev/null
           esphome config kroger-scanner.yaml > /dev/null
+      - name: Compile the AtomS3 firmware
+        working-directory: esphome
+        run: esphome compile kroger-scanner-atoms3.yaml
+
+  housing:
+    name: Housing (OpenSCAD)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - run: sudo apt-get update -q && sudo apt-get install -y -q openscad
+      - name: Render both parts
+        working-directory: hardware/housing
+        run: |
+          openscad -o /tmp/housing.stl -D 'part="housing"' kroger_scanner_housing.scad
+          openscad -o /tmp/cover.stl -D 'part="cover"' kroger_scanner_housing.scad
+          test -s /tmp/housing.stl && test -s /tmp/cover.stl
 
   tests:
     name: Pytest

@@ -73,6 +73,8 @@ class FakeKrogerApi:
     def __init__(self) -> None:
         """Initialize."""
         self.products: dict[str, Product] = {}
+        # Per-store overrides: location_id -> product_id -> Product.
+        self.store_products: dict[str, dict[str, Product]] = {}
         self.search_results: dict[str, list[Product]] = {}
         self.locations: list[Location] = [
             Location(
@@ -87,6 +89,7 @@ class FakeKrogerApi:
         self.cart_calls: list[list[CartItem]] = []
         self.product_calls: list[str] = []
         self.search_calls: list[str] = []
+        self.location_calls: list[str] = []
         self.fail_cart: Exception | None = None
         self.call_counts: dict[str, int] = {}
         self.products_use_app_token = False
@@ -116,9 +119,8 @@ class FakeKrogerApi:
         self, product_id: str, location_id: str
     ) -> Product | None:
         """Look up a product."""
-        assert location_id == LOCATION_ID
         self.product_calls.append(product_id)
-        return self.products.get(product_id)
+        return self.store_products.get(location_id, self.products).get(product_id)
 
     async def async_search_products(
         self, term: str, location_id: str, limit: int = 10
@@ -138,6 +140,13 @@ class FakeKrogerApi:
     ) -> list[Location]:
         """Return stores."""
         return self.locations if zip_code == "45202" else []
+
+    async def async_get_location(self, location_id: str) -> Location | None:
+        """Return one store."""
+        self.location_calls.append(location_id)
+        return next(
+            (loc for loc in self.locations if loc.location_id == location_id), None
+        )
 
     async def async_get_profile_id(self) -> str:
         """Return the profile id."""

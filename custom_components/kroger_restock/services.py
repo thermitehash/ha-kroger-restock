@@ -30,6 +30,7 @@ from .const import (
     PRINT_TARGETS,
     SERVICE_ADD_ITEM,
     SERVICE_CHECK_STOCK,
+    SERVICE_MARK_CART_RECEIVED,
     SERVICE_PRINT_LIST,
     SERVICE_READD_ITEM,
     SERVICE_RESOLVE_ITEM,
@@ -157,6 +158,11 @@ async def _print_list(call: ServiceCall) -> ServiceResponse:
     return _maybe(call, result)
 
 
+async def _mark_cart_received(call: ServiceCall) -> ServiceResponse:
+    count = await _coordinator(call).async_mark_cart_received()
+    return _maybe(call, {"marked": count})
+
+
 @callback
 def async_setup_services(hass: HomeAssistant) -> None:
     """Register the integration's actions."""
@@ -168,6 +174,7 @@ def async_setup_services(hass: HomeAssistant) -> None:
         (SERVICE_READD_ITEM, _readd_item, READD_SCHEMA),
         (SERVICE_CHECK_STOCK, _check_stock, SYNC_SCHEMA),
         (SERVICE_PRINT_LIST, _print_list, PRINT_SCHEMA),
+        (SERVICE_MARK_CART_RECEIVED, _mark_cart_received, SYNC_SCHEMA),
     ):
         hass.services.async_register(
             DOMAIN,

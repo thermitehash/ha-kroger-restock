@@ -12,14 +12,16 @@ status, and the caller leaves the order unchanged.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+from datetime import date, time
 from enum import StrEnum
+import html
 from html.parser import HTMLParser
 import re
 
-# Sender domains of Kroger-family banners. Order emails come from these
-# domains or their subdomains. Kroger's own order emails come from
-# email@e.krogermail.com (seen Nov 2026). More can be added in the options.
+# Sender domains of Kroger-family banners. Kroger's transactional order
+# emails come from email@e.krogermail.com. More senders (domains or full
+# addresses) can be added in the options.
 KROGER_FAMILY_DOMAINS: frozenset[str] = frozenset(
     {
         "kroger.com",
@@ -44,6 +46,15 @@ KROGER_FAMILY_DOMAINS: frozenset[str] = frozenset(
         "smithsfoodanddrug.com",
     }
 )
+
+
+# Kroger's mail domain also sends non-order mail (e.g. the developer portal's
+# krogerapisupport@ verification email). For these domains only the listed
+# local parts count as order mail.
+ORDER_SENDER_LOCAL_PARTS: dict[str, frozenset[str]] = {
+    "krogermail.com": frozenset({"email"}),
+}
+IGNORED_LOCAL_PARTS: frozenset[str] = frozenset({"krogerapisupport"})
 
 
 class OrderStatus(StrEnum):
@@ -129,6 +140,8 @@ _STATUS_RULES: tuple[tuple[str, re.Pattern[str]], ...] = (
 _ORDER_NUMBER = re.compile(
     r"\border\s*(?:#|no\.?|number|num\.?)\s*:?\s*#?\s*([0-9][0-9A-Z-]{5,})", re.I
 )
+# Instacart delivery confirmations: "We received your order 1234... and ..."
+_ORDER_NUMBER_INLINE = re.compile(r"\border\s+#?\s*(\d{12,})\b", re.I)
 _TIME = r"\d{1,2}(?::\d{2})?\s*[ap]\.?\s?m\.?"
 # "between 4:00pm and 5:00pm", "3:00 PM - 4:00 PM", "3 pm to 4 pm"
 _WINDOW = re.compile(rf"({_TIME})\s*(?:-|–|—|to|and)\s*({_TIME})", re.I)
@@ -139,9 +152,43 @@ _DATE = re.compile(
     re.I,
 )
 _ITEM_COUNT = re.compile(r"\bnumber of items\s*:?\s*(\d+)", re.I)
+# "Pickup Fee | $4.95 $0.00 |": a struck-through original then the actual
+# charge, so the last amount on the line wins.
+_FEE_LINE = re.compile(r"\b(?:pick[ -]?up|delivery|service) fee\b(.*)$", re.I)
+_AMOUNT = re.compile(r"\$\s?([\d,]+\.\d{2})")
+_ZERO_WIDTH = re.compile("[\u200b\u200c\u200d\u2060\ufeff\u00ad\u034f]")
+_HTML_TAG = re.compile(r"<(?:html|body|div|table|tr|td|p|br|span|b|strong)\b", re.I)
+_DELIVERY_BODY = re.compile(
+    r"\bdelivery (?:date|address|window|time)\b|\bwill be delivered\b|"
+    r"\binstacart\b|\bout for delivery\b",
+    re.I,
+)
+_PICKUP_BODY = re.compile(
+    r"\bpick[ -]?up (?:date|location|window|time|today)\b|"
+    r"\bready for pick[ -]?up\b|\byour pick[ -]?up order\b|\bpick up today\b",
+    re.I,
+)
+_MONTHS = {
+    m: i
+    for i, m in enumerate(
+        (
+            "jan",
+            "feb",
+            "mar",
+            "apr",
+            "may",
+            "jun",
+            "jul",
+            "aug",
+            "sep",
+            "oct",
+            "nov",
+            "dec",
+        ),
+        start=1,
+    )
+}
 _TOTAL = re.compile(r"(?<![a-z])total\*?\s*:?\s*\$\s?([\d,]+\.\d{2})", re.I)
-_MODALITY_DELIVERY = re.compile(r"\bdeliver", re.I)
-_MODALITY_PICKUP = re.compile(r"\bpick[ -]?up\b", re.I)
 
 _SHORTED_HEADER = re.compile(
     rf"^(?:out[ -]of[ -]stock(?: items?)?|unavailable(?: items?)?|"
@@ -178,11 +225,20 @@ class OrderEmail:
     status: str | None
     order_number: str | None = None
     window: str | None = None
+    # Structured window (local store time, no time zone in the email).
+    window_date: date | None = None
+    # "today" / "tomorrow" when the email says so instead of a date.
+    window_relative: str | None = None
+    window_start: time | None = None
+    window_end: time | None = None
     modality: str | None = None
-    shorted: list[str] = field(default_factory=list)
-    substitutions: list[str] = field(default_factory=list)
+    # None means "this email had no such section" (unknown), [] means the
+    # section was there but empty.
+    shorted: list[str] | None = None
+    substitutions: list[str] | None = None
     item_count: int | None = None
     total: float | None = None
+    fee: float | None = None
 
 
 class _TextExtractor(HTMLParser):
@@ -231,12 +287,21 @@ class _TextExtractor(HTMLParser):
 
 
 def email_to_lines(text: str) -> list[str]:
-    """Return the email body as stripped lines (HTML or plain text)."""
-    if re.search(r"<(?:html|body|div|table|p|br)\b", text, re.I):
+    """Return the email body as clean lines.
+
+    Handles HTML bodies, plain-text parts that contain literal HTML tags and
+    entities (Kroger's "ready for pickup" email does), zero-width spacer
+    characters (``&zwnj;`` runs), and markdown-style table pipes.
+    """
+    if _HTML_TAG.search(text):
         extractor = _TextExtractor()
         extractor.feed(text)
+        extractor.close()
         text = "".join(extractor.parts)
-    lines = [" ".join(line.split()) for line in text.splitlines()]
+    else:
+        text = html.unescape(text)
+    text = _ZERO_WIDTH.sub("", text).replace("\xa0", " ")
+    lines = [" ".join(line.replace("|", " ").split()) for line in text.splitlines()]
     # Collapse runs of blank lines to one.
     out: list[str] = []
     for line in lines:
@@ -245,39 +310,119 @@ def email_to_lines(text: str) -> list[str]:
     return out
 
 
-def is_kroger_sender(sender: str, extra_domains: tuple[str, ...] = ()) -> bool:
-    """Return True if ``sender`` is an address at a Kroger-family domain."""
-    domain = sender.rpartition("@")[2].strip().lower().rstrip(">")
+def _split_address(sender: str) -> tuple[str, str]:
+    address = sender.strip().lower()
+    if "<" in address:
+        address = address.rpartition("<")[2]
+    address = address.strip().rstrip(">")
+    local, _, domain = address.rpartition("@")
+    return local, domain
+
+
+def _domain_match(domain: str, base: str) -> bool:
+    return domain == base or domain.endswith(f".{base}")
+
+
+def is_kroger_sender(sender: str, extra: tuple[str, ...] = ()) -> bool:
+    """Return True if ``sender`` is at a Kroger-family domain (any local part)."""
+    _local, domain = _split_address(sender)
     if not domain:
         return False
-    domains = KROGER_FAMILY_DOMAINS | {d.strip().lower() for d in extra_domains if d}
-    return any(domain == d or domain.endswith(f".{d}") for d in domains)
+    domains = KROGER_FAMILY_DOMAINS | {
+        d.strip().lower().lstrip("@") for d in extra if d and "@" not in d.strip("@")
+    }
+    return any(_domain_match(domain, d) for d in domains)
+
+
+def is_order_sender(sender: str, extra: tuple[str, ...] = ()) -> bool:
+    """Return True if ``sender`` sends Kroger order emails.
+
+    ``extra`` may hold domains (``ralphsmail.com``) or full addresses
+    (``orders@e.ralphsmail.com``); those are always accepted.
+    """
+    local, domain = _split_address(sender)
+    if not domain or not local:
+        return False
+    address = f"{local}@{domain}"
+    for item in extra:
+        value = item.strip().lower()
+        if "@" in value.strip("@"):
+            if address == value:
+                return True
+        elif value and _domain_match(domain, value.lstrip("@")):
+            return local not in IGNORED_LOCAL_PARTS
+    if local in IGNORED_LOCAL_PARTS or not is_kroger_sender(sender):
+        return False
+    for base, allowed in ORDER_SENDER_LOCAL_PARTS.items():
+        if _domain_match(domain, base):
+            return local in allowed
+    return True
+
+
+def _parse_time(text: str) -> time | None:
+    match = re.match(r"(\d{1,2})(?::(\d{2}))?\s*([ap])", text.replace(".", ""), re.I)
+    if not match:
+        return None
+    hour, minute = int(match.group(1)) % 12, int(match.group(2) or 0)
+    if match.group(3).lower() == "p":
+        hour += 12
+    return time(hour, minute) if minute < 60 else None
+
+
+def _parse_date(text: str) -> tuple[date | None, str | None]:
+    """Return (date, relative) from a matched date label."""
+    lowered = text.lower()
+    if "today" in lowered:
+        return None, "today"
+    if "tomorrow" in lowered:
+        return None, "tomorrow"
+    match = re.search(r"([a-z]{3})[a-z]*\.?\s+(\d{1,2})(?:,\s*(\d{4}))?", lowered)
+    if not match or match.group(1) not in _MONTHS:
+        return None, None
+    year = int(match.group(3)) if match.group(3) else 1900  # 1900 = unknown year
+    try:
+        return date(year, _MONTHS[match.group(1)], int(match.group(2))), None
+    except ValueError:
+        return None, None
 
 
 def _norm_time(text: str) -> str:
     return re.sub(r"[\s.]", "", text).lower()
 
 
-def _find_window(lines: list[str]) -> str | None:
-    """Return e.g. 'Mar 4, 2027 4:00pm–5:00pm' or 'Today 4:00pm–5:00pm'.
+@dataclass(slots=True)
+class _Window:
+    label: str
+    start: time | None
+    end: time | None
+    day: date | None = None
+    relative: str | None = None
+
+
+def _find_window(lines: list[str]) -> _Window | None:
+    """Find the pickup/delivery window, e.g. 'Mar 4, 2027 4:00pm–5:00pm'.
 
     Kroger writes the window as "between 4:00pm and 5:00pm", sometimes with
     the date on the same line and sometimes under a heading such as
     "PICK UP TODAY BETWEEN:". A window with a date is preferred.
     """
-    first: str | None = None
+    first: _Window | None = None
     for index, line in enumerate(lines):
         match = _WINDOW.search(line)
         if not match:
             continue
+        start, end = _parse_time(match.group(1)), _parse_time(match.group(2))
         times = f"{_norm_time(match.group(1))}–{_norm_time(match.group(2))}"
         for probe in (line, *reversed(lines[max(0, index - 2) : index])):
-            if date := _DATE.search(probe):
-                label = " ".join(date.group(0).replace(" - ", " ").split())
+            if found := _DATE.search(probe):
+                label = " ".join(found.group(0).replace(" - ", " ").split())
                 if label.isupper():  # "PICK UP TODAY BETWEEN:"
                     label = label.title()
-                return f"{label[0].upper()}{label[1:]} {times}"
-        first = first or times
+                day, relative = _parse_date(label)
+                return _Window(
+                    f"{label[0].upper()}{label[1:]} {times}", start, end, day, relative
+                )
+        first = first or _Window(times, start, end)
     return first
 
 
@@ -301,8 +446,16 @@ def _clean_item(line: str) -> str | None:
     return text
 
 
-def _section(lines: list[str], header: re.Pattern[str], *, clean: bool) -> list[str]:
-    """Collect the lines under every heading matching ``header``."""
+def _section(
+    lines: list[str], header: re.Pattern[str], *, clean: bool
+) -> list[str] | None:
+    """Collect the lines under every heading matching ``header``.
+
+    Returns None when no such heading exists, so callers can tell "no data"
+    from "nothing listed".
+    """
+    if not any(header.match(line) for line in lines):
+        return None
     found: list[str] = []
     index = 0
     while index < len(lines):
@@ -342,24 +495,43 @@ def parse_order_email(subject: str, text: str) -> OrderEmail:
     status = _classify(subject or "", lines)
 
     order_number = None
-    if match := _ORDER_NUMBER.search(f"{subject}\n{body}"):
+    match = _ORDER_NUMBER.search(f"{subject}\n{body}") or _ORDER_NUMBER_INLINE.search(
+        body
+    )
+    if match:
         order_number = match.group(1).strip("-").upper()
 
     window = _find_window(lines)
     item_count = int(m.group(1)) if (m := _ITEM_COUNT.search(body)) else None
     total = float(m.group(1).replace(",", "")) if (m := _TOTAL.search(body)) else None
+    fee = None
+    for line in lines:
+        if (m := _FEE_LINE.search(line)) and (amounts := _AMOUNT.findall(m.group(1))):
+            fee = float(amounts[-1].replace(",", ""))
+            break
 
+    # Pickup vs delivery comes from the body: Kroger uses the same subject
+    # ("Order Confirmed, <name>") for both. Only "Instacart" in a subject
+    # (the delivery receipt) is trusted.
     modality = None
-    probe = f"{subject}\n{' '.join(lines[:20])}"
-    if status == OrderStatus.OUT_FOR_DELIVERY or _MODALITY_DELIVERY.search(probe):
+    if (
+        status == OrderStatus.OUT_FOR_DELIVERY
+        or _DELIVERY_BODY.search(body)
+        or re.search(r"\binstacart\b", subject or "", re.I)
+    ):
         modality = "delivery"
-    elif status == OrderStatus.READY or _MODALITY_PICKUP.search(probe):
+    elif status == OrderStatus.READY or _PICKUP_BODY.search(body):
         modality = "pickup"
 
     return OrderEmail(
         status=status,
         order_number=order_number,
-        window=window,
+        window=window.label if window else None,
+        window_date=window.day if window else None,
+        window_relative=window.relative if window else None,
+        window_start=window.start if window else None,
+        window_end=window.end if window else None,
+        fee=fee,
         modality=modality,
         shorted=_section(lines, _SHORTED_HEADER, clean=True),
         substitutions=_section(lines, _SUBSTITUTION_HEADER, clean=False),

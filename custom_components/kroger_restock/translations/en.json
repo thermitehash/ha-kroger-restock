@@ -1,6 +1,6 @@
 {
   "application_credentials": {
-    "description": "Create an application at the [Kroger developer portal]({developer_url}) with the scopes `product.compact`, `cart.basic:write` and `profile.compact`, and set its redirect URI to `{redirect_uri}`. Then enter its client ID and client secret here."
+    "description": "Create an application at the [Kroger developer portal]({developer_url}) with the scopes `product.compact`, `cart.basic:write` and `profile.compact`, and set its redirect URI to `{redirect_uri}`. Then enter its client ID and client secret here. Complete the Kroger sign-in on a computer; on phones the app-to-browser switch often loses it."
   },
   "config": {
     "step": {
@@ -9,7 +9,7 @@
       },
       "store": {
         "title": "Find your store",
-        "description": "Enter a ZIP code to find nearby Kroger-family stores. Stock levels and aisles come from this store.",
+        "description": "Enter a ZIP code to find nearby Kroger-family stores. Stock levels and aisles come from this store. Each store is listed with its street address, because Kroger's store names don't always match the city.",
         "data": {
           "zip_code": "ZIP code"
         },
@@ -37,7 +37,11 @@
       },
       "reauth_confirm": {
         "title": "Authentication expired for {name}",
-        "description": "Your Kroger sign-in has expired. Sign in again to keep syncing your list."
+        "description": "Your Kroger sign-in has expired. Sign in again to keep syncing your list. Complete the sign-in on a computer; on phones it often fails."
+      },
+      "user": {
+        "title": "Sign in to Kroger",
+        "description": "Next you'll sign in to your Kroger account in a new window and approve access.\n\n**Complete the Kroger sign-in on a computer.** On phones, the switch between the Home Assistant app and the browser often loses the sign-in.\n\nYou need a Kroger developer app's client ID and secret (see the README); you'll be asked for them if you haven't added them yet."
       }
     },
     "error": {
@@ -99,7 +103,7 @@
       },
       "store": {
         "title": "Find your store",
-        "description": "Enter a ZIP code to find nearby Kroger-family stores. Stock levels and aisles come from this store.",
+        "description": "Enter a ZIP code to find nearby Kroger-family stores. Stock levels and aisles come from this store. Each store is listed with its street address, because Kroger's store names don't always match the city.",
         "data": {
           "zip_code": "ZIP code"
         },
@@ -136,18 +140,16 @@
       },
       "orders": {
         "title": "Order tracking",
-        "description": "Kroger's API can't read orders, so order status comes from Kroger's order emails. Set up the IMAP integration for the mailbox that receives them, then pick it here.",
+        "description": "Kroger's API can't read orders, so order status comes from Kroger's order emails. Set up the IMAP integration for the mailbox that receives them, then pick it here. For Gmail, point IMAP at [Gmail]/All Mail (or a label your filter applies), not INBOX: receipts often land in the Promotions tab and archived mail leaves the inbox.",
         "data": {
           "imap_entry": "IMAP account",
           "notify_orders": "Notify on order updates",
-          "readd_shorted": "Re-add shorted items automatically",
-          "extra_sender_domains": "Extra sender domains"
+          "extra_sender_domains": "Extra senders"
         },
         "data_description": {
           "imap_entry": "The IMAP integration entry for the mailbox Kroger emails. Leave empty to turn order tracking off.",
           "notify_orders": "Notify when an order is ready, out for delivery, cancelled, or missing items. Uses the notification targets from Settings.",
-          "readd_shorted": "When an email says items were out of stock or not picked, put the matching list items back and push them to the cart again. Off by default: matching uses product names and can be wrong.",
-          "extra_sender_domains": "Only needed if your order emails come from a domain that isn't recognized. Comma separated, e.g. ralphsmail.com. Kroger's own emails (e.krogermail.com) are already recognized."
+          "extra_sender_domains": "Only needed if your order emails come from a sender that isn't recognized. Comma-separated domains or full addresses, e.g. ralphsmail.com or orders@e.ralphsmail.com. Kroger's own order emails (email@e.krogermail.com) are already recognized."
         }
       }
     },
@@ -424,6 +426,16 @@
           "name": "Print to",
           "description": "Receipt printer, PDF, or both."
         },
+        "config_entry_id": {
+          "name": "Config entry",
+          "description": "The Kroger Restock entry to use. Only needed if you have more than one."
+        }
+      }
+    },
+    "mark_cart_received": {
+      "name": "Mark cart received",
+      "description": "Marks every item that's in the cart (fully pushed) as received. Use it after an order is picked up or delivered; the order emails don't list items, so this is never done automatically.",
+      "fields": {
         "config_entry_id": {
           "name": "Config entry",
           "description": "The Kroger Restock entry to use. Only needed if you have more than one."

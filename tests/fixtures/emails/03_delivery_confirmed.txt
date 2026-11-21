@@ -1,0 +1,14 @@
+| Your order will be delivered on Nov 20, 2026 between 2:00pm and 3:00pm. | View in your browser |
+| |
+| Hi Alex, |
+| We received your order 3333444455556666777 and it looks good. You may modify your order until your Instacart shopper starts picking it. |
+| |
+| DELIVERY DATE: Friday - Nov 20, 2026 between 2:00pm and 3:00pm |
+| |
+| DELIVERY ADDRESS: 1 Example Way Anytown OH 45000 |
+| |
+| NUMBER OF ITEMS: 5 |
+| |
+| Estimated Subtotal | $20.00 |
+| Delivery Fee | $3.99 |
+| Total* | $25.19 |

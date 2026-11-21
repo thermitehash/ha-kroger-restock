@@ -71,6 +71,9 @@
     },
     "print_list": {
       "service": "mdi:printer"
+    },
+    "mark_cart_received": {
+      "service": "mdi:cart-check"
     }
   }
 }
