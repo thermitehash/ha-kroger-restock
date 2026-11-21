@@ -577,9 +577,16 @@ async def test_completed_order_asks_to_mark_received(
     # ...the user is asked instead, with a button.
     assert len(calls) == 1
     assert calls[0].data["title"] == "Kroger order picked up"
-    assert calls[0].data["message"] == "Mark the 2 in-cart items received?"
-    action = calls[0].data["data"]["actions"][0]
-    assert action["title"] == "Mark received"
+    assert calls[0].data["message"].startswith("Mark the 2 in-cart items received?")
+    actions = calls[0].data["data"]["actions"]
+    assert [a["title"] for a in actions] == [
+        "All received",
+        "Some missing…",
+        "Open list",
+    ]
+    assert actions[1]["behavior"] == "textInput"
+    assert actions[2]["uri"] == "/todo?entity_id=todo.kroger_test_store"
+    action = actions[0]
 
     hass.bus.async_fire("mobile_app_notification_action", {"action": action["action"]})
     await hass.async_block_till_done()
@@ -596,8 +603,131 @@ async def test_mark_cart_received_action(
     result = await hass.services.async_call(
         DOMAIN, "mark_cart_received", {}, blocking=True, return_response=True
     )
-    assert result == {"marked": 2}
+    assert result == {"received": 2, "missing": [], "unmatched": []}
     coordinator = setup_integration.runtime_data.coordinator
     assert all(
         coordinator.get_item(i).status is ItemStatus.RECEIVED for i in ids.values()
     )
+
+
+async def _complete_order_with_cart(
+    hass: HomeAssistant,
+    tracking: MockConfigEntry,
+    imap_entry: MockConfigEntry,
+    mailbox: dict[str, str],
+    fake_api: FakeKrogerApi,
+    freezer: FrozenDateTimeFactory,
+) -> tuple[dict[str, str], list[ServiceCall], dict[str, str]]:
+    calls = async_mock_service(hass, "notify", "mobile_app_pixel")
+    await set_options(hass, tracking, notify_targets=["notify.mobile_app_pixel"])
+    ids = await setup_cart(hass, fake_api)
+    freezer.tick(timedelta(minutes=1))
+    await deliver(hass, imap_entry, mailbox, SUBJECTS["confirmed"], CONFIRMED_TEXT)
+    await deliver(hass, imap_entry, mailbox, SUBJECTS["ready"], READY_TEXT)
+    calls.clear()
+    await deliver(hass, imap_entry, mailbox, SUBJECTS["receipt"], RECEIPT_TEXT)
+    actions = {
+        a["title"]: a.get("action", "") for a in calls[0].data["data"]["actions"]
+    }
+    calls.clear()
+    return ids, calls, actions
+
+
+async def test_some_missing_reply_readds_those_items(
+    hass: HomeAssistant,
+    tracking: MockConfigEntry,
+    imap_entry: MockConfigEntry,
+    mailbox: dict[str, str],
+    fake_api: FakeKrogerApi,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    """Out-of-stock/replacement notices come by text; the user types what's missing."""
+    ids, calls, actions = await _complete_order_with_cart(
+        hass, tracking, imap_entry, mailbox, fake_api, freezer
+    )
+    coordinator = tracking.runtime_data.coordinator
+    fake_api.set_stock("0004900002891", "TEMPORARILY_OUT_OF_STOCK")
+    pushes = len(fake_api.cart_lines)
+
+    hass.bus.async_fire(
+        "mobile_app_notification_action",
+        {
+            "action": actions["Some missing…"],
+            "reply_text": "brown eggs and coca cola, kale",
+        },
+    )
+    await hass.async_block_till_done()
+
+    eggs = coordinator.get_item(ids["Simple Truth Organic Large Brown Eggs"])
+    coke = coordinator.get_item(ids["Coca-Cola Classic Soda"])
+    assert eggs.status is ItemStatus.IN_CART  # in stock: pushed again for next order
+    assert coke.status is ItemStatus.WAITING  # now out of stock: waits
+    assert fake_api.cart_lines[pushes:] == [("0001111000101", 1)]
+    assert len(calls) == 1
+    message = calls[0].data["message"]
+    assert message.startswith("0 marked received.")
+    assert "Simple Truth Organic Large Brown Eggs (back in the cart)" in message
+    assert "Coca-Cola Classic Soda (waiting on stock)" in message
+    assert 'Couldn\'t match: "kale"' in message
+
+
+async def test_some_missing_with_empty_reply_changes_nothing(
+    hass: HomeAssistant,
+    tracking: MockConfigEntry,
+    imap_entry: MockConfigEntry,
+    mailbox: dict[str, str],
+    fake_api: FakeKrogerApi,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    ids, calls, actions = await _complete_order_with_cart(
+        hass, tracking, imap_entry, mailbox, fake_api, freezer
+    )
+    hass.bus.async_fire(
+        "mobile_app_notification_action",
+        {"action": actions["Some missing…"], "reply_text": "  "},
+    )
+    await hass.async_block_till_done()
+    coordinator = tracking.runtime_data.coordinator
+    assert all(
+        coordinator.get_item(i).status is ItemStatus.IN_CART for i in ids.values()
+    )
+    assert calls[0].data["title"] == "Nothing marked"
+
+
+async def test_mark_cart_received_with_missing(
+    hass: HomeAssistant, setup_integration: MockConfigEntry, fake_api: FakeKrogerApi
+) -> None:
+    ids = await setup_cart(hass, fake_api)
+    coke_id = ids["Coca-Cola Classic Soda"]
+    result = await hass.services.async_call(
+        DOMAIN,
+        "mark_cart_received",
+        {"missing": [coke_id, "dragon fruit"]},
+        blocking=True,
+        return_response=True,
+    )
+    assert result["received"] == 1
+    assert result["missing"] == [
+        {"item_id": coke_id, "name": "Coca-Cola Classic Soda", "status": "in_cart"}
+    ]
+    assert result["unmatched"] == ["dragon fruit"]
+    coordinator = setup_integration.runtime_data.coordinator
+    eggs = coordinator.get_item(ids["Simple Truth Organic Large Brown Eggs"])
+    assert eggs.status is ItemStatus.RECEIVED
+    assert coordinator.get_item(coke_id).status is ItemStatus.IN_CART
+
+
+async def test_mark_cart_received_missing_as_text(
+    hass: HomeAssistant, setup_integration: MockConfigEntry, fake_api: FakeKrogerApi
+) -> None:
+    await setup_cart(hass, fake_api)
+    result = await hass.services.async_call(
+        DOMAIN,
+        "mark_cart_received",
+        {"missing": "eggs"},
+        blocking=True,
+        return_response=True,
+    )
+    assert [m["name"] for m in result["missing"]] == [
+        "Simple Truth Organic Large Brown Eggs"
+    ]

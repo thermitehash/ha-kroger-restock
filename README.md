@@ -258,9 +258,13 @@ order window. Returns `checked`, `back_in_stock`, `pushed`, `held`,
 
 ### `kroger_restock.mark_cart_received`
 
-Marks every in-cart item (fully pushed) as received. Use it after an order is
-picked up or delivered; the order-complete notification offers the same as a
-button. Returns `marked`.
+Marks the in-cart items (fully pushed) as received after an order is picked up
+or delivered. Optional `missing`: items that were expected but didn't arrive,
+as item IDs or names (`eggs, milk`). Those go back on the list (stock check,
+then pushed again for your next order). Returns `received`, `missing` (each
+item's new status) and `unmatched` (names that matched nothing; uncheck those
+on the list instead). The order-complete notification does the same with its
+**All received** / **Some missing…** buttons.
 
 ### `kroger_restock.print_list`
 
@@ -353,8 +357,17 @@ So `shopping`, `out_for_delivery` and `cancelled` are supported but
 4. In **Kroger Restock → Configure → Order tracking**, pick that IMAP account.
    - **Notify on order updates** (on by default): ready for pickup, cancelled,
      and **order picked up / delivered**, which asks *"Mark the N in-cart
-     items received?"* with a **Mark received** button. Items are never
-     checked off automatically, because the receipt doesn't list them.
+     items received?"* Items are never checked off automatically, because the
+     receipt doesn't list them. The notification has three buttons:
+     - **All received:** marks every in-cart item received.
+     - **Some missing…:** type what didn't come (e.g. `eggs, milk`). Those
+       items go back on the list (stock check, then back into the cart for
+       your next order), everything else is marked received, and a follow-up
+       notification confirms what matched. Use this for Kroger's last-minute
+       out-of-stock and replacement notices, which come by **text message**
+       with a link, not email, so the integration can't see them.
+     - **Open list:** opens the grocery list; unchecking an item there does
+       the same as typing it.
    - **Extra senders**: only if your banner's order emails come from a
      sender that isn't recognized (domains or full addresses).
 

@@ -64,6 +64,7 @@ from .const import (
     ItemStatus,
     ScanResult,
 )
+from .matching import match_item
 from .schedule import check_spacing, in_order_window, next_window_start, waited_too_long
 from .store import ListItem, RestockData, RestockStore
 
@@ -251,17 +252,48 @@ class KrogerRestockCoordinator(DataUpdateCoordinator[RestockData]):
             and (before is None or (i.cart_pushed_at and i.cart_pushed_at <= before))
         ]
 
-    async def async_mark_cart_received(self, before: datetime | None = None) -> int:
-        """Mark in-cart items received (after the user confirms an order arrived)."""
+    async def async_mark_cart_received(
+        self,
+        before: datetime | None = None,
+        missing: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Mark in-cart items received after an order arrived.
+
+        ``missing`` lists items that were expected but didn't arrive (item IDs
+        or names, e.g. from the notification's text reply). Those go back on
+        the list through the re-add path (stock check, then pushed again for
+        the next order); everything else is marked received.
+        """
         async with self._lock:
             items = self.in_cart_items(before)
+            by_id = {item.id: item for item in items}
+            missing_items: list[ListItem] = []
+            unmatched: list[str] = []
+            for entry in missing or []:
+                item = by_id.get(entry) or match_item(
+                    entry, [i for i in items if i not in missing_items]
+                )
+                if item is None:
+                    unmatched.append(entry)
+                elif item not in missing_items:
+                    missing_items.append(item)
             now = dt_util.utcnow()
             for item in items:
                 item.status = ItemStatus.RECEIVED
                 item.received_at = now
             if items:
                 self._changed()
-        return len(items)
+        returned = []
+        for item in missing_items:
+            result = await self.async_readd(item.id)
+            returned.append(
+                {"item_id": item.id, "name": item.name, "status": result["status"]}
+            )
+        return {
+            "received": len(items) - len(missing_items),
+            "missing": returned,
+            "unmatched": unmatched,
+        }
 
     @callback
     def async_start(self) -> None:

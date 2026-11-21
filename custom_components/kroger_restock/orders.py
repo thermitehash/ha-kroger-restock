@@ -11,12 +11,12 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta
 import hashlib
 import logging
-import re
 from typing import TYPE_CHECKING, Any
 
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import CALLBACK_TYPE, Event, HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers import entity_registry as er
 from homeassistant.util import dt as dt_util
 
 from .const import (
@@ -24,10 +24,12 @@ from .const import (
     CONF_IMAP_ENTRY,
     CONF_NOTIFY_ORDERS,
     DEFAULT_NOTIFY_ORDERS,
+    DOMAIN,
     EVENT_ORDER_UPDATE,
     ItemStatus,
 )
 from .coordinator import entry_option
+from .matching import match_item, split_names
 from .order_email import (
     ACTIVE_ORDER_STATUSES,
     UPDATE_ONLY,
@@ -53,7 +55,6 @@ UNNUMBERED_MATCH_WINDOW = timedelta(days=4)
 # Kroger's final receipt has no order number. It completes the most recent
 # ready (pickup) or placed (delivery) order from this long ago.
 RECEIPT_MATCH_WINDOW = timedelta(hours=24)
-MATCH_THRESHOLD = 0.6
 UNKNOWN_ORDER = "unknown"
 # Re-adding shorted items automatically is disabled until a real Kroger email
 # with item-level shortage data has been seen; none exists in the sample
@@ -61,6 +62,36 @@ UNKNOWN_ORDER = "unknown"
 READD_SHORTED_AVAILABLE = False
 EVENT_NOTIFICATION_ACTION = "mobile_app_notification_action"
 ACTION_MARK_RECEIVED = "KROGER_RESTOCK_MARK_RECEIVED"
+CHOICE_ALL = "ALL"
+CHOICE_MISSING = "MISSING"
+
+
+def missing_summary(result: dict[str, Any]) -> str:
+    """Describe a mark_cart_received result in one notification."""
+    parts = [f"{result['received']} marked received."]
+    status_text = {
+        "in_cart": "back in the cart",
+        "waiting": "waiting on stock",
+        "needs_review": "needs review",
+        "unmatched": "needs review",
+    }
+    if result["missing"]:
+        parts.append(
+            "Added back: "
+            + ", ".join(
+                f"{m['name']} ({status_text.get(m['status'], m['status'])})"
+                for m in result["missing"]
+            )
+            + "."
+        )
+    if result["unmatched"]:
+        parts.append(
+            "Couldn't match: "
+            + ", ".join(f'"{name}"' for name in result["unmatched"])
+            + ". Uncheck them on the list instead."
+        )
+    return " ".join(parts)
+
 
 _NOTIFY_STATUSES = frozenset(
     {OrderStatus.READY, OrderStatus.OUT_FOR_DELIVERY, OrderStatus.CANCELLED}
@@ -74,34 +105,6 @@ _STATUS_TITLES = {
     OrderStatus.COMPLETED: "Kroger order complete",
     OrderStatus.CANCELLED: "Kroger order cancelled",
 }
-
-
-def _tokens(text: str) -> set[str]:
-    words = re.findall(r"[a-z0-9]+", text.lower())
-    return {
-        w[:-1] if len(w) > 3 and w.endswith("s") else w for w in words if len(w) > 1
-    }
-
-
-def match_item(name: str, items: list[ListItem]) -> ListItem | None:
-    """Return the one list item that clearly matches a shorted item name."""
-    wanted = _tokens(name)
-    if not wanted:
-        return None
-    scored: list[tuple[float, ListItem]] = []
-    for item in items:
-        have = _tokens(f"{item.brand or ''} {item.name}")
-        if not have:
-            continue
-        score = len(wanted & have) / len(wanted)
-        if score >= MATCH_THRESHOLD:
-            scored.append((score, item))
-    if not scored:
-        return None
-    scored.sort(key=lambda pair: pair[0], reverse=True)
-    if len(scored) > 1 and scored[0][0] == scored[1][0]:
-        return None  # ambiguous
-    return scored[0][1]
 
 
 def current_order(orders: list[KrogerOrder], now: datetime) -> KrogerOrder | None:
@@ -168,14 +171,38 @@ class OrderWatcher:
         return str(event_data.get("action", "")).startswith(self._action_id)
 
     async def _handle_notification_action(self, event: Event) -> None:
-        """Handle a tap on "Mark received" in the order-complete notification."""
-        number = str(event.data["action"]).removeprefix(self._action_id).lstrip("_")
+        """Handle "All received" / "Some missing…" on the order-complete prompt.
+
+        Kroger reports last-minute out-of-stock items and replacements by text
+        message, which the integration can't see, so the user says what
+        didn't arrive. Those items go back on the list (stock check, then back
+        into the cart for the next order); everything else is marked received.
+        """
+        rest = str(event.data["action"]).removeprefix(self._action_id).lstrip("_")
+        number, _, choice = rest.rpartition("_")
+        if choice not in (CHOICE_ALL, CHOICE_MISSING):
+            number, choice = rest, CHOICE_ALL  # v0.7.0-dev action IDs
         order = next(
             (o for o in self.coordinator.data.orders if o.order_number == number), None
         )
         cutoff = (order.placed_at or order.completed_at) if order else None
-        count = await self.coordinator.async_mark_cart_received(before=cutoff)
-        _LOGGER.debug("Marked %s in-cart items received for order %s", count, number)
+        if choice == CHOICE_ALL:
+            await self.coordinator.async_mark_cart_received(before=cutoff)
+            return
+        reply = str(event.data.get("reply_text") or "").strip()
+        if not reply:
+            await self.coordinator.async_notify(
+                "Nothing marked",
+                "No missing items were entered. Open the grocery list and uncheck "
+                "what didn't arrive, or answer the prompt again.",
+            )
+            return
+        result = await self.coordinator.async_mark_cart_received(
+            before=cutoff, missing=split_names(reply)
+        )
+        await self.coordinator.async_notify(
+            "Kroger order: missing items", missing_summary(result)
+        )
 
     @property
     def extra_domains(self) -> tuple[str, ...]:
@@ -508,13 +535,34 @@ class OrderWatcher:
         if count == 0:
             return
         plural = "item" if count == 1 else "items"
+        action = f"{self._action_id}_{order.order_number}"
+        actions: list[dict[str, str]] = [
+            {"action": f"{action}_{CHOICE_ALL}", "title": "All received"},
+            {
+                "action": f"{action}_{CHOICE_MISSING}",
+                "title": "Some missing…",
+                "behavior": "textInput",
+                "textInputButtonTitle": "Add back",
+                "textInputPlaceholder": "What didn't come? e.g. eggs, milk",
+            },
+        ]
+        if todo := self._todo_entity_id():
+            actions.append(
+                {
+                    "action": "URI",
+                    "title": "Open list",
+                    "uri": f"/todo?entity_id={todo}",
+                }
+            )
         await self.coordinator.async_notify(
             f"Kroger order {verb}",
-            f"Mark the {count} in-cart {plural} received?",
-            actions=[
-                {
-                    "action": f"{self._action_id}_{order.order_number}",
-                    "title": "Mark received",
-                }
-            ],
+            f"Mark the {count} in-cart {plural} received? If anything was out of "
+            "stock or replaced, tap Some missing… and type what didn't come.",
+            actions=actions,
+        )
+
+    def _todo_entity_id(self) -> str | None:
+        registry = er.async_get(self.hass)
+        return registry.async_get_entity_id(
+            "todo", DOMAIN, f"{self.coordinator.config_entry.entry_id}_todo"
         )

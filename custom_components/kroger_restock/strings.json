@@ -434,11 +434,15 @@
     },
     "mark_cart_received": {
       "name": "Mark cart received",
-      "description": "Marks every item that's in the cart (fully pushed) as received. Use it after an order is picked up or delivered; the order emails don't list items, so this is never done automatically.",
+      "description": "Marks the items in the cart as received after an order is picked up or delivered. List anything that didn't arrive (out of stock or replaced at the last minute) under Missing: those go back on the list, get a stock check and are pushed to the cart again for your next order.",
       "fields": {
         "config_entry_id": {
           "name": "[%key:component::kroger_restock::services::scan_upc::fields::config_entry_id::name%]",
           "description": "[%key:component::kroger_restock::services::scan_upc::fields::config_entry_id::description%]"
+        },
+        "missing": {
+          "name": "Missing",
+          "description": "Items that were expected but didn't arrive: list item IDs or names, e.g. \"eggs, milk\"."
         }
       }
     }

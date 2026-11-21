@@ -19,6 +19,7 @@ import voluptuous as vol
 from .const import (
     ATTR_CONFIG_ENTRY_ID,
     ATTR_ITEM_ID,
+    ATTR_MISSING,
     ATTR_NAME,
     ATTR_PRODUCT_ID,
     ATTR_QUANTITY,
@@ -38,6 +39,7 @@ from .const import (
     SERVICE_SYNC,
     ItemSource,
 )
+from .matching import split_names
 from .printer import async_print
 
 if TYPE_CHECKING:
@@ -76,6 +78,14 @@ RESOLVE_SCHEMA = vol.Schema(
 SYNC_SCHEMA = vol.Schema(_ENTRY)
 PRINT_SCHEMA = vol.Schema(
     {**_ENTRY, vol.Optional(ATTR_TARGET, default=PRINT_BOTH): vol.In(PRINT_TARGETS)}
+)
+MARK_RECEIVED_SCHEMA = vol.Schema(
+    {
+        **_ENTRY,
+        vol.Optional(ATTR_MISSING): vol.Any(
+            cv.string, vol.All(cv.ensure_list, [cv.string])
+        ),
+    }
 )
 READD_SCHEMA = vol.Schema({**_ENTRY, vol.Required(ATTR_ITEM_ID): cv.string})
 
@@ -159,8 +169,11 @@ async def _print_list(call: ServiceCall) -> ServiceResponse:
 
 
 async def _mark_cart_received(call: ServiceCall) -> ServiceResponse:
-    count = await _coordinator(call).async_mark_cart_received()
-    return _maybe(call, {"marked": count})
+    missing = call.data.get(ATTR_MISSING) or []
+    if isinstance(missing, str):
+        missing = split_names(missing)
+    result = await _coordinator(call).async_mark_cart_received(missing=list(missing))
+    return _maybe(call, result)
 
 
 @callback
@@ -174,7 +187,7 @@ def async_setup_services(hass: HomeAssistant) -> None:
         (SERVICE_READD_ITEM, _readd_item, READD_SCHEMA),
         (SERVICE_CHECK_STOCK, _check_stock, SYNC_SCHEMA),
         (SERVICE_PRINT_LIST, _print_list, PRINT_SCHEMA),
-        (SERVICE_MARK_CART_RECEIVED, _mark_cart_received, SYNC_SCHEMA),
+        (SERVICE_MARK_CART_RECEIVED, _mark_cart_received, MARK_RECEIVED_SCHEMA),
     ):
         hass.services.async_register(
             DOMAIN,

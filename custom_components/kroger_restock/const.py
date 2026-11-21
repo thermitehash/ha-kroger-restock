@@ -89,6 +89,7 @@ ATTR_NAME: Final = "name"
 ATTR_ITEM_ID: Final = "item_id"
 ATTR_PRODUCT_ID: Final = "product_id"
 ATTR_TARGET: Final = "target"
+ATTR_MISSING: Final = "missing"
 
 SEARCH_LIMIT: Final = 10
 MAX_REVIEW_CANDIDATES: Final = 5

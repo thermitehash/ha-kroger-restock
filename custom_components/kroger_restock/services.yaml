@@ -117,6 +117,11 @@ print_list:
 
 mark_cart_received:
   fields:
+    missing:
+      example: "eggs, milk"
+      selector:
+        text:
+          multiple: true
     config_entry_id:
       selector:
         config_entry:
