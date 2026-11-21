@@ -2,19 +2,23 @@
 
 from __future__ import annotations
 
+from collections import namedtuple
 from collections.abc import Generator
-from datetime import timedelta
+from datetime import datetime, timedelta
+from email.utils import format_datetime
 from typing import Any
 from unittest.mock import patch
 
 from freezegun.api import FrozenDateTimeFactory
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse
+from homeassistant.helpers import issue_registry as ir
 from homeassistant.util import dt as dt_util
 import pytest
 from pytest_homeassistant_custom_component.common import (
     MockConfigEntry,
     async_capture_events,
+    async_fire_time_changed,
     async_mock_service,
 )
 
@@ -109,7 +113,67 @@ async def set_options(
     """Change options and reload, like finishing the options flow does."""
     hass.config_entries.async_update_entry(entry, options={**entry.options, **options})
     await hass.config_entries.async_reload(entry.entry_id)
-    await hass.async_block_till_done()
+    await hass.async_block_till_done(wait_background_tasks=True)
+
+
+Response = namedtuple("Response", "result lines")
+
+
+def header_block(message_id: str, subject: str, when: datetime) -> bytes:
+    """Raw header bytes, as IMAP returns them for HEADER.FIELDS."""
+    return (
+        f"Message-ID: {message_id}\r\n"
+        f"From: Kroger <{KROGER_SENDER}>\r\n"
+        f"Subject: {subject}\r\n"
+        f"Date: {format_datetime(when)}\r\n\r\n"
+    ).encode()
+
+
+class FakeImapClient:
+    """Answers SEARCH and header FETCH like aioimaplib does."""
+
+    def __init__(self, messages: list[bytes]) -> None:
+        self.messages = messages
+
+    async def search(self, search: str, charset: str = "utf-8") -> Response:
+        if not self.messages:
+            return Response("OK", [b"SEARCH completed"])
+        numbers = " ".join(str(n) for n in range(1, len(self.messages) + 1))
+        return Response("OK", [numbers.encode(), b"SEARCH completed"])
+
+    async def fetch(self, sequence: str, spec: str) -> Response:
+        lines: list[Any] = []
+        for number in sequence.split(","):
+            header = self.messages[int(number) - 1]
+            lines += [
+                f"{number} FETCH (BODY[HEADER.FIELDS (MESSAGE-ID FROM SUBJECT DATE)]"
+                f" {{{len(header)}}}".encode(),
+                bytearray(header),
+                b")",
+            ]
+        lines.append(b"Fetch completed")
+        return Response("OK", lines)
+
+    async def logout(self) -> None:
+        return None
+
+
+@pytest.fixture(autouse=True)
+def imap_server() -> Generator[dict[str, Any]]:
+    """Fake mailbox per IMAP folder; records connections."""
+    server: dict[str, Any] = {"folders": {}, "connects": 0, "fail": None}
+
+    async def connect(entry_data: Any) -> FakeImapClient:
+        server["connects"] += 1
+        if server["fail"] is not None:
+            raise server["fail"]
+        return FakeImapClient(server["folders"].get(entry_data.get("folder"), []))
+
+    with patch(
+        "custom_components.kroger_restock.imap_baseline.async_connect",
+        side_effect=connect,
+    ):
+        yield server
 
 
 _uid = 0
@@ -125,6 +189,8 @@ async def deliver(
     sender: str = KROGER_SENDER,
     uid: str | None = None,
     event_text: str | None = None,
+    date: datetime | None = None,
+    message_id: str | None = None,
 ) -> str:
     global _uid  # noqa: PLW0603
     if uid is None:
@@ -138,8 +204,9 @@ async def deliver(
             "sender": sender,
             "subject": subject,
             "uid": uid,
-            "date": dt_util.utcnow(),
+            "date": date or dt_util.utcnow(),
             "initial": True,
+            **({"headers": {"Message-ID": [message_id]}} if message_id else {}),
             "text": event_text if event_text is not None else text[:50],
         },
     )
@@ -245,11 +312,18 @@ async def test_duplicates_and_foreign_mail_are_ignored(
     mailbox: dict[str, str],
 ) -> None:
     events = async_capture_events(hass, EVENT_ORDER_UPDATE)
+    when = dt_util.utcnow()
     uid = await deliver(
-        hass, imap_entry, mailbox, "Thanks for your order!", PLACED_TEXT
+        hass, imap_entry, mailbox, "Thanks for your order!", PLACED_TEXT, date=when
     )
     await deliver(
-        hass, imap_entry, mailbox, "Thanks for your order!", PLACED_TEXT, uid=uid
+        hass,
+        imap_entry,
+        mailbox,
+        "Thanks for your order!",
+        PLACED_TEXT,
+        uid=uid,
+        date=when,
     )
     await deliver(
         hass,
@@ -796,3 +870,219 @@ async def test_imap_picker_good_entry_saves_directly(
         result["flow_id"], {"imap_entry": imap_entry.entry_id, "notify_orders": True}
     )
     assert result["type"] == "create_entry"
+
+
+# --- Folder baseline (linking to a folder that holds order history) ----------
+
+HISTORY_SUBJECTS = [
+    "Pickup Order Confirmed, Alex",
+    "Your Order is Ready for Pickup at 100 Main St Anytown OH 45000",
+    "Alex, Here’s Your Final Receipt. Tell Us How We Did with Your Order.",
+]
+
+
+def history(count: int, prefix: str = "old") -> list[tuple[str, str, datetime]]:
+    start = datetime(2026, 1, 5, 12, 0, tzinfo=dt_util.UTC)
+    return [
+        (
+            f"<{prefix}-{n}@e.krogermail.com>",
+            HISTORY_SUBJECTS[n % 3],
+            start + timedelta(days=n // 3 * 3, hours=n % 3),
+        )
+        for n in range(count)
+    ]
+
+
+async def link(
+    hass: HomeAssistant, entry: MockConfigEntry, imap_entry: MockConfigEntry
+) -> None:
+    await set_options(hass, entry, imap_entry=imap_entry.entry_id)
+
+
+async def test_link_baselines_existing_history(
+    hass: HomeAssistant,
+    setup_integration: MockConfigEntry,
+    imap_entry: MockConfigEntry,
+    mailbox: dict[str, str],
+    imap_server: dict[str, Any],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    old = history(100)
+    imap_server["folders"]["Kroger"] = [header_block(*m) for m in old]
+    events = async_capture_events(hass, EVENT_ORDER_UPDATE)
+    with caplog.at_level("INFO"):
+        await link(hass, setup_integration, imap_entry)
+    data = setup_integration.runtime_data.coordinator.data
+    assert data.imap_baseline["count"] == 100
+    assert data.imap_baseline["folder"] == "Kroger"
+    assert data.orders == []
+    assert "Baselined 100 existing messages in folder Kroger" in caplog.text
+
+    # HA's IMAP integration fires for the newest existing message on start:
+    # it's in the baseline, so nothing happens.
+    message_id, subject, when = old[-1]
+    await deliver(
+        hass,
+        imap_entry,
+        mailbox,
+        subject,
+        CONFIRMED_TEXT,
+        date=when,
+        message_id=message_id,
+    )
+    # An old email without headers is matched by sender/subject/date instead.
+    message_id, subject, when = old[-3]
+    await deliver(hass, imap_entry, mailbox, subject, CONFIRMED_TEXT, date=when)
+    assert events == []
+    assert data.orders == []
+
+    # A new confirmation after the baseline is processed.
+    await deliver(
+        hass,
+        imap_entry,
+        mailbox,
+        SUBJECTS["confirmed"],
+        CONFIRMED_TEXT,
+        message_id="<new-1@e.krogermail.com>",
+    )
+    assert hass.states.get(SENSOR).state == "placed"
+    assert len(events) == 1
+
+
+async def test_relink_to_another_entry_rebaselines(
+    hass: HomeAssistant,
+    setup_integration: MockConfigEntry,
+    imap_entry: MockConfigEntry,
+    imap_entries: list[MockConfigEntry],
+    mailbox: dict[str, str],
+    imap_server: dict[str, Any],
+) -> None:
+    imap_server["folders"]["Kroger"] = [header_block(*m) for m in history(10)]
+    await link(hass, setup_integration, imap_entry)
+    other = MockConfigEntry(
+        domain="imap",
+        title="Mail 2",
+        state=ConfigEntryState.LOADED,
+        data={"folder": "Kroger2", "search": 'FROM "e.krogermail.com"'},
+    )
+    other.add_to_hass(hass)
+    imap_entries.append(other)
+    second = history(3, prefix="other")
+    imap_server["folders"]["Kroger2"] = [header_block(*m) for m in second]
+
+    await link(hass, setup_integration, other)
+    data = setup_integration.runtime_data.coordinator.data
+    assert data.imap_baseline["entry_id"] == other.entry_id
+    assert data.imap_baseline["count"] == 3
+    events = async_capture_events(hass, EVENT_ORDER_UPDATE)
+    message_id, subject, when = second[0]
+    await deliver(
+        hass, other, mailbox, subject, CONFIRMED_TEXT, date=when, message_id=message_id
+    )
+    assert events == []
+    assert data.orders == []
+
+
+async def test_changed_folder_rebaselines(
+    hass: HomeAssistant,
+    setup_integration: MockConfigEntry,
+    imap_entry: MockConfigEntry,
+    imap_server: dict[str, Any],
+) -> None:
+    imap_server["folders"]["Kroger"] = [header_block(*m) for m in history(4)]
+    await link(hass, setup_integration, imap_entry)
+    imap_server["folders"]["[Gmail]/All Mail"] = [header_block(*m) for m in history(7)]
+    hass.config_entries.async_update_entry(
+        imap_entry, data={**imap_entry.data, "folder": "[Gmail]/All Mail"}
+    )
+    await hass.config_entries.async_reload(setup_integration.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
+    baseline = setup_integration.runtime_data.coordinator.data.imap_baseline
+    assert (baseline["folder"], baseline["count"]) == ("[Gmail]/All Mail", 7)
+
+
+async def test_restart_does_not_reprocess_or_rebaseline(
+    hass: HomeAssistant,
+    setup_integration: MockConfigEntry,
+    imap_entry: MockConfigEntry,
+    mailbox: dict[str, str],
+    imap_server: dict[str, Any],
+) -> None:
+    imap_server["folders"]["Kroger"] = [header_block(*m) for m in history(5)]
+    await link(hass, setup_integration, imap_entry)
+    when = dt_util.utcnow()
+    await deliver(
+        hass,
+        imap_entry,
+        mailbox,
+        SUBJECTS["confirmed"],
+        CONFIRMED_TEXT,
+        date=when,
+        message_id="<new-2@e.krogermail.com>",
+    )
+    connects = imap_server["connects"]
+
+    # Restart (reload): the seen set and the baseline persist.
+    await hass.config_entries.async_reload(setup_integration.entry_id)
+    await hass.async_block_till_done(wait_background_tasks=True)
+    assert imap_server["connects"] == connects  # no new baseline
+    events = async_capture_events(hass, EVENT_ORDER_UPDATE)
+    # HA's IMAP integration re-fires the newest message after a restart.
+    await deliver(
+        hass,
+        imap_entry,
+        mailbox,
+        SUBJECTS["confirmed"],
+        CONFIRMED_TEXT,
+        date=when,
+        message_id="<new-2@e.krogermail.com>",
+    )
+    assert events == []
+    assert len(setup_integration.runtime_data.coordinator.data.orders) == 1
+
+
+async def test_baseline_failure_pauses_processing_and_retries(
+    hass: HomeAssistant,
+    setup_integration: MockConfigEntry,
+    imap_entry: MockConfigEntry,
+    mailbox: dict[str, str],
+    imap_server: dict[str, Any],
+    issue_registry: ir.IssueRegistry,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    imap_server["fail"] = OSError("network unreachable")
+    await link(hass, setup_integration, imap_entry)
+    issue_id = f"imap_baseline_{setup_integration.entry_id}"
+    issue = issue_registry.async_get_issue(DOMAIN, issue_id)
+    assert issue is not None
+    assert "network unreachable" in issue.translation_placeholders["error"]
+    events = async_capture_events(hass, EVENT_ORDER_UPDATE)
+    await deliver(hass, imap_entry, mailbox, SUBJECTS["confirmed"], CONFIRMED_TEXT)
+    assert events == []  # nothing is processed without a baseline
+
+    imap_server["fail"] = None
+    freezer.tick(timedelta(minutes=5, seconds=1))
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done(wait_background_tasks=True)
+    assert issue_registry.async_get_issue(DOMAIN, issue_id) is None
+    await deliver(
+        hass,
+        imap_entry,
+        mailbox,
+        SUBJECTS["confirmed"],
+        CONFIRMED_TEXT,
+        message_id="<after-fix@e.krogermail.com>",
+    )
+    assert len(events) == 1
+
+
+async def test_unlink_clears_baseline(
+    hass: HomeAssistant,
+    setup_integration: MockConfigEntry,
+    imap_entry: MockConfigEntry,
+    imap_server: dict[str, Any],
+) -> None:
+    await link(hass, setup_integration, imap_entry)
+    assert setup_integration.runtime_data.coordinator.data.imap_baseline is not None
+    await set_options(hass, setup_integration, imap_entry="")
+    assert setup_integration.runtime_data.coordinator.data.imap_baseline is None

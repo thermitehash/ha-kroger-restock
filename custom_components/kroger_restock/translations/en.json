@@ -352,6 +352,10 @@
           "not_loaded": "Kroger Restock is not loaded."
         }
       }
+    },
+    "imap_baseline": {
+      "title": "Order tracking is paused: couldn't read the order-email folder",
+      "description": "Before acting on any order email, Kroger Restock records the messages already in the folder as seen, so your order history is never processed. It couldn't read the folder of {imap} ({error}), so no order emails are being processed. It retries every 5 minutes; check the IMAP connection's credentials and folder."
     }
   },
   "services": {

@@ -152,7 +152,7 @@ class KrogerOrder:
 
 
 MAX_ORDERS = 10
-MAX_SEEN_EMAILS = 200
+MAX_SEEN_EMAILS = 2000
 
 
 @dataclass(slots=True)
@@ -168,6 +168,9 @@ class RestockData:
     seen_emails: list[str] = field(default_factory=list)
     # Store the aisle/price/stock data on items refers to.
     location_id: str | None = None
+    # Messages already in the order-email folder when it was linked (never
+    # processed): {entry_id, folder, search, keys, count, taken_at}.
+    imap_baseline: dict[str, Any] | None = None
 
 
 class _VersionedStore(Store[dict[str, Any]]):
@@ -183,6 +186,9 @@ class _VersionedStore(Store[dict[str, Any]]):
             # 1.2 added give_up_snoozed_at to items.
             for item in old_data.get("items", []):
                 item.setdefault("give_up_snoozed_at", None)
+        if old_major_version == 1 and old_minor_version < 5:
+            # 1.5 added the order-email folder baseline.
+            old_data.setdefault("imap_baseline", None)
         if old_major_version == 1 and old_minor_version < 4:
             # 1.4 added pending_push / already_in_cart to items.
             for item in old_data.get("items", []):
@@ -219,6 +225,7 @@ class RestockStore:
             orders=[KrogerOrder.from_dict(row) for row in raw.get("orders", [])],
             seen_emails=list(raw.get("seen_emails", [])),
             location_id=raw.get("location_id"),
+            imap_baseline=raw.get("imap_baseline"),
         )
 
     async def async_save(self, data: RestockData) -> None:
@@ -241,4 +248,5 @@ class RestockStore:
             "orders": [order.as_dict() for order in data.orders],
             "seen_emails": list(data.seen_emails),
             "location_id": data.location_id,
+            "imap_baseline": data.imap_baseline,
         }

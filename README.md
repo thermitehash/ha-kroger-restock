@@ -405,8 +405,10 @@ affected.
    - **From:** `e.krogermail.com`
    - Actions: **Apply the label** `Kroger` (create it), and **Never send it to
      Spam**.
-   - **Don't** tick "Also apply filter to matching conversations": old orders
-     would be read as new ones.
+   - Ticking "Also apply filter to matching conversations" is fine, and
+     recommended: the `Kroger` label can and should hold your full order
+     history. Old mail is never processed (see *Linking keeps your history*
+     below).
 2. **New IMAP connection** (Settings → Devices & services → Add integration
    → IMAP), signed in with a Gmail **app password**:
    - **Folder:** `Kroger`
@@ -424,6 +426,17 @@ affected.
 3. **Why not INBOX?** Gmail files recent Kroger receipts under the Promotions
    tab, and archiving moves mail out of INBOX. A label (or `[Gmail]/All Mail`
    with the same search) keeps working either way.
+
+**Linking keeps your history (baseline).** When you pick an IMAP connection
+in Order tracking (or pick a different one, or change its folder or search),
+Kroger Restock first reads the headers of every message already in that folder
+and records them as seen, **without processing them**. Only mail that arrives
+afterwards is acted on. The log shows e.g. *"Baselined 100 existing messages
+in folder Kroger"*. If the mailbox can't be reached, nothing is processed
+until it can: a Repairs issue explains why, and it retries every 5 minutes.
+The seen list and baseline are saved, so a Home Assistant restart never
+reprocesses anything. (HA's IMAP integration re-announces the newest message
+at every start; that's expected and ignored.)
 
 4. In **Kroger Restock → Configure → Order tracking**, pick that connection.
    Each choice is shown as *"<name> — folder: … · search: …"*. If the one you

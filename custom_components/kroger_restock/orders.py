@@ -9,14 +9,14 @@ with ``imap.fetch``, and parses it (see ``order_email``).
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta
-import hashlib
 import logging
 from typing import TYPE_CHECKING, Any
 
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import CALLBACK_TYPE, Event, HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers import entity_registry as er, issue_registry as ir
+from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.util import dt as dt_util
 
 from .const import (
@@ -29,6 +29,7 @@ from .const import (
     ItemStatus,
 )
 from .coordinator import entry_option
+from .imap_baseline import BaselineError, async_take_baseline, content_keys
 from .matching import match_item, split_names
 from .order_email import (
     ACTIVE_ORDER_STATUSES,
@@ -46,6 +47,8 @@ if TYPE_CHECKING:
 _LOGGER = logging.getLogger(__name__)
 
 EVENT_IMAP_CONTENT = "imap_content"
+ISSUE_IMAP_BASELINE = "imap_baseline"
+BASELINE_RETRY = timedelta(minutes=5)
 IMAP_DOMAIN = "imap"
 # Show "none" once the latest order has been finished this long.
 FINISHED_ORDER_VISIBLE = timedelta(days=2)
@@ -130,6 +133,8 @@ class OrderWatcher:
         self.hass = hass
         self.coordinator = coordinator
         self._unsubs: list[CALLBACK_TYPE] = []
+        self._retry_unsub: CALLBACK_TYPE | None = None
+        self._baseline_keys: frozenset[str] = frozenset()
 
     @property
     def imap_entry_id(self) -> str | None:
@@ -139,9 +144,24 @@ class OrderWatcher:
 
     @callback
     def async_start(self) -> None:
-        """Start listening (only if an IMAP entry is configured)."""
+        """Start listening (only if an IMAP entry is configured).
+
+        A folder may hold years of order history, so before acting on any
+        email the messages already there are recorded as seen (the baseline).
+        """
+        data = self.coordinator.data
         if self.imap_entry_id is None:
+            if data.imap_baseline is not None:
+                # Unlinked: a later re-link takes a fresh baseline.
+                data.imap_baseline = None
+                self.coordinator.mark_changed()
             return
+        if self._baseline_ready():
+            self._baseline_keys = frozenset(data.imap_baseline["keys"])  # type: ignore[index]
+        else:
+            self.coordinator.config_entry.async_create_background_task(
+                self.hass, self.async_ensure_baseline(), "kroger_restock imap baseline"
+            )
         self._unsubs.append(
             self.hass.bus.async_listen(
                 EVENT_IMAP_CONTENT, self._handle_event, event_filter=self._filter
@@ -161,6 +181,88 @@ class OrderWatcher:
         for unsub in self._unsubs:
             unsub()
         self._unsubs.clear()
+        if self._retry_unsub is not None:
+            self._retry_unsub()
+            self._retry_unsub = None
+
+    # ------------------------------------------------------------------
+    # Folder baseline
+
+    def _imap_settings(self) -> tuple[str, str] | None:
+        entry = self.hass.config_entries.async_get_entry(self.imap_entry_id or "")
+        if entry is None:
+            return None
+        return (
+            str(entry.data.get("folder", "INBOX")),
+            str(entry.data.get("search", "UnSeen UnDeleted")),
+        )
+
+    def _baseline_ready(self) -> bool:
+        """Return True if a baseline exists for this entry, folder and search."""
+        baseline = self.coordinator.data.imap_baseline
+        settings = self._imap_settings()
+        return (
+            baseline is not None
+            and settings is not None
+            and baseline.get("entry_id") == self.imap_entry_id
+            and (baseline.get("folder"), baseline.get("search")) == settings
+        )
+
+    def _baseline_issue_id(self) -> str:
+        return f"{ISSUE_IMAP_BASELINE}_{self.coordinator.config_entry.entry_id}"
+
+    async def async_ensure_baseline(self, _now: Any = None) -> bool:
+        """Take the baseline if needed. Returns True once one is in place."""
+        if self._baseline_ready():
+            return True
+        entry = self.hass.config_entries.async_get_entry(self.imap_entry_id or "")
+        try:
+            if entry is None:
+                raise BaselineError("The selected IMAP connection no longer exists")
+            baseline = await async_take_baseline(entry.entry_id, entry.data)
+        except BaselineError as err:
+            _LOGGER.warning("Couldn't baseline the order-email folder: %s", err)
+            ir.async_create_issue(
+                self.hass,
+                DOMAIN,
+                self._baseline_issue_id(),
+                is_fixable=False,
+                severity=ir.IssueSeverity.WARNING,
+                translation_key=ISSUE_IMAP_BASELINE,
+                translation_placeholders={
+                    "imap": entry.title if entry else str(self.imap_entry_id),
+                    "error": str(err),
+                },
+            )
+            if self._retry_unsub is None:
+                self._retry_unsub = async_track_time_interval(
+                    self.hass,
+                    self.async_ensure_baseline,
+                    BASELINE_RETRY,
+                    name="kroger_restock imap baseline retry",
+                )
+            return False
+        self.coordinator.data.imap_baseline = {
+            "entry_id": baseline.entry_id,
+            "folder": baseline.folder,
+            "search": baseline.search,
+            "keys": sorted(baseline.keys),
+            "count": baseline.count,
+            "taken_at": dt_util.utcnow().isoformat(),
+        }
+        self._baseline_keys = baseline.keys
+        self.coordinator.mark_changed()
+        await self.coordinator.async_flush()
+        ir.async_delete_issue(self.hass, DOMAIN, self._baseline_issue_id())
+        if self._retry_unsub is not None:
+            self._retry_unsub()
+            self._retry_unsub = None
+        _LOGGER.info(
+            "Baselined %d existing messages in folder %s",
+            baseline.count,
+            baseline.folder,
+        )
+        return True
 
     @property
     def _action_id(self) -> str:
@@ -218,13 +320,12 @@ class OrderWatcher:
 
     @staticmethod
     def email_keys(data: dict[str, Any]) -> list[str]:
-        """Keys identifying one email: IMAP UID, and Message-ID or content.
+        """Content keys for one email: Message-ID (if sent) and a content hash.
 
-        UIDs change when a message moves folder, so a second key based on the
-        Message-ID header (when the IMAP entry sends headers) or on sender,
-        subject and date catches the same email seen again.
+        HA's IMAP integration reports SEARCH sequence numbers as ``uid``; they
+        shift when mail leaves the folder, so they're never used for "seen".
+        The same keys are recorded by the folder baseline.
         """
-        keys = [f"uid:{data.get('entry_id')}:{data.get('uid')}"]
         headers = data.get("headers") or {}
         message_id = None
         if isinstance(headers, dict):
@@ -232,17 +333,27 @@ class OrderWatcher:
                 if str(name).lower() == "message-id":
                     message_id = value[0] if isinstance(value, (list, tuple)) else value
                     break
-        if message_id:
-            keys.append(f"mid:{str(message_id).strip()}")
-        else:
-            raw = f"{data.get('sender')}|{data.get('subject')}|{data.get('date')}"
-            keys.append("sha:" + hashlib.sha1(raw.encode()).hexdigest()[:20])
-        return keys
+        return content_keys(
+            data.get("sender"),
+            data.get("subject"),
+            data.get("date"),
+            str(message_id) if message_id else None,
+        )
+
+    def _is_seen(self, keys: list[str]) -> bool:
+        seen = self.coordinator.data.seen_emails
+        return any(key in seen or key in self._baseline_keys for key in keys)
 
     async def _handle_event(self, event: Event) -> None:
         data = event.data
+        if not self._baseline_ready():
+            _LOGGER.debug(
+                "Ignoring Kroger email until the folder baseline is taken: %s",
+                data.get("subject"),
+            )
+            return
         keys = self.email_keys(data)
-        if any(key in self.coordinator.data.seen_emails for key in keys):
+        if self._is_seen(keys):
             return
         text = await self._fetch_text(data)
         received = data.get("date")
