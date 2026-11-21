@@ -515,6 +515,11 @@ python script/gen_translations.py   # after editing strings.json
 node script/render_icons.js         # after editing assets/*.svg
 ```
 
+**Releasing:** bump `version` in `manifest.json` (and optionally add
+`docs/releases/v<version>.md`, first line = title). When that reaches `main`
+and the Validate workflow passes, the Release workflow tags and publishes it.
+A version that's already released is skipped.
+
 `tests/test_live_cart.py` is an optional, manual check against the real API
 (it shows whether Kroger's cart accepts an out-of-stock UPC). It is skipped
 unless `KROGER_LIVE_*` environment variables are set, and it adds one unit to
