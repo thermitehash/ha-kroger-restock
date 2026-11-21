@@ -61,6 +61,11 @@ class ListItem:
     out_of_stock_since: datetime | None = None
     cart_pushed_at: datetime | None = None
     received_at: datetime | None = None
+    # Units sent in a cart call that hasn't been confirmed yet (see PUSHING /
+    # CHECK_CART). Saved before the call, so a crash can't lose track of it.
+    pending_push: int = 0
+    # Recorded as already in the Kroger cart (no cart call) once resolved.
+    already_in_cart: bool = False
     # Set when the user chose "keep waiting" on a give-up repair.
     give_up_snoozed_at: datetime | None = None
 
@@ -178,6 +183,11 @@ class _VersionedStore(Store[dict[str, Any]]):
             # 1.2 added give_up_snoozed_at to items.
             for item in old_data.get("items", []):
                 item.setdefault("give_up_snoozed_at", None)
+        if old_major_version == 1 and old_minor_version < 4:
+            # 1.4 added pending_push / already_in_cart to items.
+            for item in old_data.get("items", []):
+                item.setdefault("pending_push", 0)
+                item.setdefault("already_in_cart", False)
         if old_major_version == 1 and old_minor_version < 3:
             # 1.3 added order tracking from emails.
             old_data.setdefault("orders", [])

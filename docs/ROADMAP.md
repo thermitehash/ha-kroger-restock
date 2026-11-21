@@ -56,6 +56,6 @@ loses amount/unit/category.
 - Re-enable automatic re-adding of shorted items once a real Kroger email
   with item-level shortage or substitution data has been seen (disabled in
   0.7.0; none exists in a year of sample mail).
-- **Parked:** "Already in cart" option for `scan_upc` / `add_item` (record
-  items already in the Kroger cart without pushing). Decided not to build it
-  for now.
+- **Parked:** anything beyond the manual `already_in_cart: true` recording
+  added in 0.9.0 (e.g. a dedicated "Already in cart" Shortcut or button).
+  The public API still can't read the cart, so recording stays manual.

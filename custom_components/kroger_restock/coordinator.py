@@ -28,6 +28,7 @@ from .api import (
     CartItem,
     KrogerApiClient,
     KrogerAuthError,
+    KrogerConnectionError,
     KrogerError,
     Product,
 )
@@ -39,6 +40,9 @@ from .barcode import (
     plu_search_term,
 )
 from .const import (
+    CHECK_CART_CONFIRM,
+    CHECK_CART_PUSH,
+    CHECK_CART_REMOVE,
     CONF_DEBOUNCE_SECONDS,
     CONF_GIVE_UP_DAYS,
     CONF_LEAD_TIME_DAYS,
@@ -77,6 +81,7 @@ _LOGGER = logging.getLogger(__name__)
 
 ISSUE_AUTH_EXPIRED = "auth_expired"
 ISSUE_GAVE_UP = "gave_up"
+ISSUE_CHECK_CART = "check_cart"
 HELD_TICK = timedelta(hours=1)
 
 _QTY_SUFFIX = re.compile(r"\s*[×x]\s*(\d+)\s*$", re.IGNORECASE)
@@ -167,6 +172,7 @@ class KrogerRestockCoordinator(DataUpdateCoordinator[RestockData]):
         self._unsubs: list[CALLBACK_TYPE] = []
         self._needs_revalidation = False
         self._last_ignored_notice = float("-inf")
+        self._record_only = False
         self._check_task: asyncio.Task[Any] | None = None
         self._last_cycle: datetime | None = None
         self.data = RestockData()
@@ -192,6 +198,16 @@ class KrogerRestockCoordinator(DataUpdateCoordinator[RestockData]):
                 item.price = None
             self._needs_revalidation = True
         self.data.location_id = self.location_id
+        # A push that was in flight when HA stopped: it may be in the cart.
+        interrupted = [i for i in self.data.items if i.status == ItemStatus.PUSHING]
+        for item in interrupted:
+            _LOGGER.warning(
+                "Cart push for %s was interrupted; it may already be in the cart",
+                item.name,
+            )
+            self._flag_check_cart(item)
+        if interrupted:
+            await self._store.async_save(self.data)
 
     async def async_revalidate_store_data(self) -> int:
         """Re-read aisle, price and stock for active items at the current store.
@@ -585,6 +601,14 @@ class KrogerRestockCoordinator(DataUpdateCoordinator[RestockData]):
         now = dt_util.utcnow()
         item.last_stock_check = now
         item.stock_level = product.stock_level
+        if self._record_only:
+            # Already physically in the Kroger cart: record it, whatever the
+            # stock level says, and make no cart call.
+            item.out_of_stock_since = None
+            item.status = ItemStatus.IN_CART
+            item.already_in_cart = False
+            await self._push([item])
+            return ProcessOutcome(ScanResult.IN_CART, item, pushed=False)
         if not product.in_stock:
             if item.status != ItemStatus.WAITING or item.out_of_stock_since is None:
                 item.out_of_stock_since = now
@@ -609,6 +633,18 @@ class KrogerRestockCoordinator(DataUpdateCoordinator[RestockData]):
                 lines.append((item, delta))
         if not lines:
             return None
+        now = dt_util.utcnow()
+        if self._record_only:
+            for item, delta in lines:
+                item.pushed_quantity += delta
+                item.cart_pushed_at = now
+            return None
+        # Save before calling Kroger: if HA stops between the cart call and
+        # the next save, these items come back as CHECK_CART, not lost.
+        for item, delta in lines:
+            item.status = ItemStatus.PUSHING
+            item.pending_push = delta
+        await self._store.async_save(self.data)
         cart = [
             CartItem(
                 upc=item.upc.zfill(PRODUCT_ID_LENGTH),  # type: ignore[union-attr]
@@ -620,13 +656,88 @@ class KrogerRestockCoordinator(DataUpdateCoordinator[RestockData]):
         try:
             await self._call(self.api.async_add_to_cart(cart))
         except HomeAssistantError as err:
-            _LOGGER.warning("Cart push failed; will retry on next sync: %s", err)
+            if isinstance(err.__cause__, KrogerConnectionError):
+                # No answer from Kroger: the request may have gone through.
+                _LOGGER.warning("Cart push got no response; asking the user: %s", err)
+                for item, _delta in lines:
+                    self._flag_check_cart(item)
+            else:
+                # Kroger answered with an error: nothing was added.
+                _LOGGER.warning("Cart push failed; will retry on next sync: %s", err)
+                for item, _delta in lines:
+                    item.status = ItemStatus.IN_CART
+                    item.pending_push = 0
+            await self._store.async_save(self.data)
             return str(err)
-        now = dt_util.utcnow()
         for item, delta in lines:
             item.pushed_quantity += delta
+            item.pending_push = 0
+            item.status = ItemStatus.IN_CART
             item.cart_pushed_at = now
+        await self._store.async_save(self.data)
         return None
+
+    # ------------------------------------------------------------------
+    # Interrupted pushes (CHECK_CART)
+
+    def _check_cart_issue_id(self, item_id: str) -> str:
+        return f"{ISSUE_CHECK_CART}_{self.config_entry.entry_id}_{item_id}"
+
+    def _flag_check_cart(self, item: ListItem) -> None:
+        """Mark an item whose cart call may or may not have gone through."""
+        item.status = ItemStatus.CHECK_CART
+        ir.async_create_issue(
+            self.hass,
+            DOMAIN,
+            self._check_cart_issue_id(item.id),
+            is_fixable=True,
+            is_persistent=False,
+            severity=ir.IssueSeverity.WARNING,
+            translation_key=ISSUE_CHECK_CART,
+            translation_placeholders={
+                "name": item.name,
+                "quantity": str(item.pending_push or item.quantity),
+            },
+            data={"entry_id": self.config_entry.entry_id, "item_id": item.id},
+        )
+
+    async def async_resolve_check_cart(
+        self, item_id: str, action: str
+    ) -> dict[str, Any]:
+        """Settle an interrupted push: confirm, push again, or remove."""
+        async with self._lock:
+            item = self.get_item(item_id)
+            if item.status not in (ItemStatus.CHECK_CART, ItemStatus.PUSHING):
+                raise ServiceValidationError(
+                    translation_domain=DOMAIN,
+                    translation_key="not_check_cart",
+                    translation_placeholders={"status": str(item.status)},
+                )
+            ir.async_delete_issue(self.hass, DOMAIN, self._check_cart_issue_id(item_id))
+            result: dict[str, Any] = {
+                "item_id": item.id,
+                "name": item.name,
+                "action": action,
+            }
+            if action == CHECK_CART_REMOVE:
+                self.data.items.remove(item)
+                self._changed()
+                result["status"] = "removed"
+                return result
+            if action == CHECK_CART_CONFIRM:
+                item.pushed_quantity += item.pending_push
+                item.cart_pushed_at = item.cart_pushed_at or dt_util.utcnow()
+            item.pending_push = 0
+            item.status = ItemStatus.IN_CART
+            error = None
+            if action == CHECK_CART_PUSH:
+                error = await self._push([item])
+            self._changed()
+        result["status"] = str(item.status)
+        result["pushed"] = action == CHECK_CART_PUSH and error is None
+        if error:
+            result["error"] = error
+        return result
 
     def _fire(self, outcome: ProcessOutcome, source: ItemSource) -> None:
         item = outcome.item
@@ -647,7 +758,9 @@ class KrogerRestockCoordinator(DataUpdateCoordinator[RestockData]):
             },
         )
 
-    def _response(self, outcome: ProcessOutcome) -> dict[str, Any]:
+    def _response(
+        self, outcome: ProcessOutcome, already_in_cart: bool = False
+    ) -> dict[str, Any]:
         item = outcome.item
         response: dict[str, Any] = {
             "result": str(outcome.result),
@@ -665,6 +778,9 @@ class KrogerRestockCoordinator(DataUpdateCoordinator[RestockData]):
             "image_url": item.image_url,
             "pushed": outcome.pushed,
         }
+        if already_in_cart:
+            # Recorded as already in the Kroger cart; no cart call was made.
+            response["already_in_cart"] = True
         if item.candidates:
             response["candidates"] = item.candidates
         if outcome.error:
@@ -673,6 +789,10 @@ class KrogerRestockCoordinator(DataUpdateCoordinator[RestockData]):
 
     async def _bump_duplicate(self, item: ListItem, quantity: int) -> ProcessOutcome:
         item.quantity += quantity
+        if self._record_only and item.status in (ItemStatus.WAITING, ItemStatus.HELD):
+            # The user says it's in the cart after all.
+            item.status = ItemStatus.IN_CART
+            item.out_of_stock_since = None
         error = None
         if item.status == ItemStatus.IN_CART:
             # Push only the extra units; already-pushed units are never resent.
@@ -683,7 +803,11 @@ class KrogerRestockCoordinator(DataUpdateCoordinator[RestockData]):
     # Public operations
 
     async def async_scan(
-        self, code: str, quantity: int = 1, source: ItemSource = ItemSource.SCAN
+        self,
+        code: str,
+        quantity: int = 1,
+        source: ItemSource = ItemSource.SCAN,
+        already_in_cart: bool = False,
     ) -> dict[str, Any]:
         """Handle a scanned barcode."""
         normalized = normalize_barcode(code)
@@ -708,10 +832,32 @@ class KrogerRestockCoordinator(DataUpdateCoordinator[RestockData]):
         self._recent_scans[digits] = now
 
         async with self._lock:
-            outcome = await self._process_scan(normalized, digits, quantity, source)
+            outcome = await self._recording(
+                already_in_cart,
+                self._process_scan(normalized, digits, quantity, source),
+            )
             self._changed()
         self._fire(outcome, source)
-        return self._response(outcome)
+        return self._response(outcome, already_in_cart)
+
+    async def _recording(self, already_in_cart: bool, coro: Any) -> ProcessOutcome:
+        """Run an add/scan/resolve, optionally as "already in the Kroger cart".
+
+        In that mode no cart call is made: matched items are recorded as in the
+        cart (pushed_quantity = quantity), and items still needing review or a
+        match remember it so resolving them later records instead of pushing.
+        """
+        self._record_only = already_in_cart
+        try:
+            outcome = await coro
+        finally:
+            self._record_only = False
+        if already_in_cart and outcome.item.status in (
+            ItemStatus.NEEDS_REVIEW,
+            ItemStatus.UNMATCHED,
+        ):
+            outcome.item.already_in_cart = True
+        return outcome
 
     async def _async_ignored(self, code: str, source: ItemSource) -> dict[str, Any]:
         _LOGGER.debug("Ignoring non-product code %r", code)
@@ -805,6 +951,7 @@ class KrogerRestockCoordinator(DataUpdateCoordinator[RestockData]):
         quantity: int = 1,
         source: ItemSource = ItemSource.MANUAL,
         note: str | None = None,
+        already_in_cart: bool = False,
     ) -> dict[str, Any]:
         """Add a free-text item: search, then match or flag for review."""
         name = " ".join(name.split())
@@ -813,10 +960,12 @@ class KrogerRestockCoordinator(DataUpdateCoordinator[RestockData]):
                 translation_domain=DOMAIN, translation_key="empty_name"
             )
         async with self._lock:
-            outcome = await self._process_text(name, quantity, source, note)
+            outcome = await self._recording(
+                already_in_cart, self._process_text(name, quantity, source, note)
+            )
             self._changed()
         self._fire(outcome, source)
-        return self._response(outcome)
+        return self._response(outcome, already_in_cart)
 
     async def _process_text(
         self, name: str, quantity: int, source: ItemSource, note: str | None
@@ -851,7 +1000,9 @@ class KrogerRestockCoordinator(DataUpdateCoordinator[RestockData]):
         self.data.items.append(item)
         return ProcessOutcome(ScanResult.NEEDS_REVIEW, item)
 
-    async def async_resolve(self, item_id: str, product_id: str) -> dict[str, Any]:
+    async def async_resolve(
+        self, item_id: str, product_id: str, already_in_cart: bool = False
+    ) -> dict[str, Any]:
         """Attach a product to an unmatched or needs-review item."""
         async with self._lock:
             item = self.get_item(item_id)
@@ -887,15 +1038,18 @@ class KrogerRestockCoordinator(DataUpdateCoordinator[RestockData]):
             if item.raw_code and not normalize_barcode(item.raw_code).is_plu:
                 # Remember the fix so the next scan of this code just works.
                 self.data.barcode_cache[item.raw_code] = product.product_id
+            record = already_in_cart or item.already_in_cart
             existing = self._find_active(product_id=product.product_id)
             if existing is not None and existing is not item:
                 self.data.items.remove(item)
-                outcome = await self._bump_duplicate(existing, item.quantity)
+                outcome = await self._recording(
+                    record, self._bump_duplicate(existing, item.quantity)
+                )
             else:
                 self._apply_product(item, product)
-                outcome = await self._settle(item, product)
+                outcome = await self._recording(record, self._settle(item, product))
             self._changed()
-        return self._response(outcome)
+        return self._response(outcome, record)
 
     async def async_sync(self) -> dict[str, Any]:
         """Push any in-cart items whose quantity hasn't been fully pushed.
@@ -1211,13 +1365,24 @@ class KrogerRestockCoordinator(DataUpdateCoordinator[RestockData]):
 
     def _clear_stale_give_up_issues(self) -> None:
         registry = ir.async_get(self.hass)
-        prefix = f"{ISSUE_GAVE_UP}_{self.config_entry.entry_id}_"
-        waiting = {i.id for i in self.data.items if i.status == ItemStatus.WAITING}
+        entry_id = self.config_entry.entry_id
+        keep = {
+            f"{ISSUE_GAVE_UP}_{entry_id}_": {
+                i.id for i in self.data.items if i.status == ItemStatus.WAITING
+            },
+            f"{ISSUE_CHECK_CART}_{entry_id}_": {
+                i.id for i in self.data.items if i.status == ItemStatus.CHECK_CART
+            },
+        }
         for domain, issue_id in list(registry.issues):
-            if domain != DOMAIN or not issue_id.startswith(prefix):
+            if domain != DOMAIN:
                 continue
-            if issue_id.removeprefix(prefix) not in waiting:
-                ir.async_delete_issue(self.hass, DOMAIN, issue_id)
+            for prefix, ids in keep.items():
+                if (
+                    issue_id.startswith(prefix)
+                    and issue_id.removeprefix(prefix) not in ids
+                ):
+                    ir.async_delete_issue(self.hass, DOMAIN, issue_id)
 
     async def async_keep_waiting(self, item_id: str) -> None:
         """User chose to keep waiting: restart the give-up clock."""

@@ -1,5 +1,9 @@
 scan_upc:
   fields:
+    already_in_cart:
+      default: false
+      selector:
+        boolean:
     upc:
       required: true
       example: "049000028911"
@@ -30,6 +34,10 @@ scan_upc:
 
 add_item:
   fields:
+    already_in_cart:
+      default: false
+      selector:
+        boolean:
     name:
       required: true
       example: "Greek yogurt"
@@ -60,6 +68,10 @@ add_item:
 
 resolve_item:
   fields:
+    already_in_cart:
+      default: false
+      selector:
+        boolean:
     item_id:
       required: true
       selector:
@@ -122,6 +134,26 @@ mark_cart_received:
       selector:
         text:
           multiple: true
+    config_entry_id:
+      selector:
+        config_entry:
+          integration: kroger_restock
+
+check_cart_item:
+  fields:
+    item_id:
+      required: true
+      selector:
+        text:
+    action:
+      required: true
+      selector:
+        select:
+          translation_key: check_cart_action
+          options:
+            - confirm
+            - push_again
+            - remove
     config_entry_id:
       selector:
         config_entry:

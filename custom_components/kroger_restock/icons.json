@@ -74,6 +74,9 @@
     },
     "mark_cart_received": {
       "service": "mdi:cart-check"
+    },
+    "check_cart_item": {
+      "service": "mdi:cart-outline"
     }
   }
 }

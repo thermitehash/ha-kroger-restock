@@ -50,7 +50,12 @@ SENSOR = "sensor.kroger_test_store_kroger_order"
 
 def fake_imap_entry(hass: HomeAssistant) -> MockConfigEntry:
     """An IMAP entry that looks loaded, without loading the real integration."""
-    entry = MockConfigEntry(domain="imap", title="Mail", state=ConfigEntryState.LOADED)
+    entry = MockConfigEntry(
+        domain="imap",
+        title="Mail",
+        state=ConfigEntryState.LOADED,
+        data={"folder": "Kroger", "search": 'FROM "e.krogermail.com"'},
+    )
     entry.add_to_hass(hass)
     return entry
 
@@ -731,3 +736,63 @@ async def test_mark_cart_received_missing_as_text(
     assert [m["name"] for m in result["missing"]] == [
         "Simple Truth Organic Large Brown Eggs"
     ]
+
+
+async def test_imap_picker_labels_and_warnings(
+    hass: HomeAssistant,
+    setup_integration: MockConfigEntry,
+    imap_entries: list[MockConfigEntry],
+) -> None:
+    """Two connections to one account are told apart; risky ones warn."""
+    good = MockConfigEntry(
+        domain="imap",
+        title="Gmail - Kroger orders",
+        data={"folder": "Kroger", "search": 'FROM "e.krogermail.com"'},
+    )
+    risky = MockConfigEntry(
+        domain="imap",
+        title="Gmail - Bills",
+        data={"folder": "INBOX", "search": "UnSeen UnDeleted"},
+    )
+    for entry in (good, risky):
+        entry.add_to_hass(hass)
+
+    result = await hass.config_entries.options.async_init(setup_integration.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"next_step_id": "orders"}
+    )
+    selector = result["data_schema"].schema["imap_entry"]
+    labels = {o["value"]: o["label"] for o in selector.config["options"]}
+    assert labels[good.entry_id] == (
+        'Gmail - Kroger orders — folder: Kroger · search: FROM "e.krogermail.com"'
+    )
+    assert labels[risky.entry_id] == (
+        "Gmail - Bills — folder: INBOX · search: UnSeen UnDeleted"
+    )
+
+    # Picking the risky one shows a warning step before saving.
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"imap_entry": risky.entry_id, "notify_orders": True}
+    )
+    assert result["step_id"] == "orders_confirm"
+    warnings = result["description_placeholders"]["warnings"]
+    assert "UnSeen" in warnings and "INBOX" in warnings
+    result = await hass.config_entries.options.async_configure(result["flow_id"], {})
+    assert result["type"] == "create_entry"
+    await hass.async_block_till_done()
+    assert setup_integration.options["imap_entry"] == risky.entry_id
+
+
+async def test_imap_picker_good_entry_saves_directly(
+    hass: HomeAssistant,
+    setup_integration: MockConfigEntry,
+    imap_entry: MockConfigEntry,
+) -> None:
+    result = await hass.config_entries.options.async_init(setup_integration.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"next_step_id": "orders"}
+    )
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"imap_entry": imap_entry.entry_id, "notify_orders": True}
+    )
+    assert result["type"] == "create_entry"

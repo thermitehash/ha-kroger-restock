@@ -60,7 +60,7 @@ DEFAULT_LEAD_TIME_DAYS: Final = 1
 WEEKDAYS: Final = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
 
 STORAGE_VERSION: Final = 1
-STORAGE_MINOR_VERSION: Final = 3
+STORAGE_MINOR_VERSION: Final = 4
 
 EVENT_SCANNED: Final = f"{DOMAIN}_scanned"
 EVENT_BACK_IN_STOCK: Final = f"{DOMAIN}_back_in_stock"
@@ -75,6 +75,7 @@ SERVICE_READD_ITEM: Final = "readd_item"
 SERVICE_CHECK_STOCK: Final = "check_stock"
 SERVICE_PRINT_LIST: Final = "print_list"
 SERVICE_MARK_CART_RECEIVED: Final = "mark_cart_received"
+SERVICE_CHECK_CART_ITEM: Final = "check_cart_item"
 
 PRINT_RECEIPT: Final = "receipt"
 PRINT_PDF: Final = "pdf"
@@ -90,6 +91,8 @@ ATTR_ITEM_ID: Final = "item_id"
 ATTR_PRODUCT_ID: Final = "product_id"
 ATTR_TARGET: Final = "target"
 ATTR_MISSING: Final = "missing"
+ATTR_ALREADY_IN_CART: Final = "already_in_cart"
+ATTR_ACTION: Final = "action"
 
 SEARCH_LIMIT: Final = 10
 MAX_REVIEW_CANDIDATES: Final = 5
@@ -106,6 +109,11 @@ class ItemStatus(StrEnum):
     HELD = "held"
     IN_CART = "in_cart"
     RECEIVED = "received"
+    # Saved just before the cart call; becomes in_cart after Kroger's 204.
+    PUSHING = "pushing"
+    # A push was interrupted (restart, crash, timeout): it may or may not be
+    # in the Kroger cart. The user confirms, pushes again, or removes it.
+    CHECK_CART = "check_cart"
 
 
 ACTIVE_STATUSES: Final = frozenset(
@@ -115,8 +123,15 @@ ACTIVE_STATUSES: Final = frozenset(
         ItemStatus.WAITING,
         ItemStatus.HELD,
         ItemStatus.IN_CART,
+        ItemStatus.PUSHING,
+        ItemStatus.CHECK_CART,
     }
 )
+
+CHECK_CART_CONFIRM: Final = "confirm"
+CHECK_CART_PUSH: Final = "push_again"
+CHECK_CART_REMOVE: Final = "remove"
+CHECK_CART_ACTIONS: Final = (CHECK_CART_CONFIRM, CHECK_CART_PUSH, CHECK_CART_REMOVE)
 
 
 class ItemSource(StrEnum):

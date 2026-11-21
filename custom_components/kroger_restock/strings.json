@@ -140,17 +140,21 @@
       },
       "orders": {
         "title": "Order tracking",
-        "description": "Kroger's API can't read orders, so order status comes from Kroger's order emails. Set up the IMAP integration for the mailbox that receives them, then pick it here. For Gmail, point IMAP at [Gmail]/All Mail (or a label your filter applies), not INBOX: receipts often land in the Promotions tab and archived mail leaves the inbox.",
+        "description": "Kroger's API can't read orders, so order status comes from Kroger's order emails. Set up a separate IMAP connection for them (folder: a Kroger label, search: FROM \"e.krogermail.com\"), then pick it here.",
         "data": {
           "imap_entry": "IMAP account",
           "notify_orders": "Notify on order updates",
           "extra_sender_domains": "Extra senders"
         },
         "data_description": {
-          "imap_entry": "The IMAP integration entry for the mailbox Kroger emails. Leave empty to turn order tracking off.",
+          "imap_entry": "The IMAP connection for the mailbox Kroger emails, shown with its folder and search so connections to the same account can be told apart. Leave empty to turn order tracking off.",
           "notify_orders": "Notify when an order is ready, out for delivery, cancelled, or missing items. Uses the notification targets from Settings.",
           "extra_sender_domains": "Only needed if your order emails come from a sender that isn't recognized. Comma-separated domains or full addresses, e.g. ralphsmail.com or orders@e.ralphsmail.com. Kroger's own order emails (email@e.krogermail.com) are already recognized."
         }
+      },
+      "orders_confirm": {
+        "title": "This IMAP connection may miss order emails",
+        "description": "{warnings}\n\nSubmit to use it anyway, or close this dialog and fix the IMAP connection's options first."
       }
     },
     "error": {
@@ -198,6 +202,13 @@
         "receipt": "Receipt printer",
         "pdf": "PDF",
         "both": "Both"
+      }
+    },
+    "check_cart_action": {
+      "options": {
+        "confirm": "Confirm in cart",
+        "push_again": "Push again",
+        "remove": "Remove from list"
       }
     }
   },
@@ -295,6 +306,9 @@
     },
     "print_failed": {
       "message": "Printing failed: {error}"
+    },
+    "not_check_cart": {
+      "message": "That item isn't waiting for a cart check (it's {status})."
     }
   },
   "issues": {
@@ -312,6 +326,25 @@
             "menu_options": {
               "keep_waiting": "Keep waiting",
               "remove": "Remove from list"
+            }
+          }
+        },
+        "abort": {
+          "not_loaded": "[%key:component::kroger_restock::exceptions::not_loaded::message%]"
+        }
+      }
+    },
+    "check_cart": {
+      "title": "{name} may already be in your Kroger cart",
+      "fix_flow": {
+        "step": {
+          "init": {
+            "title": "Is {name} in your Kroger cart?",
+            "description": "Home Assistant stopped (or lost contact with Kroger) while adding {quantity} × {name} to your cart, so it can't tell whether it got there. Check your cart in the Kroger app, then choose:",
+            "menu_options": {
+              "confirm": "It's in the cart: confirm",
+              "push_again": "It's not in the cart: push again",
+              "remove": "Remove it from the list"
             }
           }
         },
@@ -341,6 +374,10 @@
         "config_entry_id": {
           "name": "Config entry",
           "description": "The Kroger Restock entry to use. Only needed if you have more than one."
+        },
+        "already_in_cart": {
+          "name": "Already in cart",
+          "description": "The item is already in your Kroger cart (for example, added in the Kroger app). It's recorded as in the cart and nothing is sent to Kroger."
         }
       }
     },
@@ -363,6 +400,10 @@
         "config_entry_id": {
           "name": "[%key:component::kroger_restock::services::scan_upc::fields::config_entry_id::name%]",
           "description": "[%key:component::kroger_restock::services::scan_upc::fields::config_entry_id::description%]"
+        },
+        "already_in_cart": {
+          "name": "[%key:component::kroger_restock::services::scan_upc::fields::already_in_cart::name%]",
+          "description": "[%key:component::kroger_restock::services::scan_upc::fields::already_in_cart::description%]"
         }
       }
     },
@@ -381,6 +422,10 @@
         "config_entry_id": {
           "name": "[%key:component::kroger_restock::services::scan_upc::fields::config_entry_id::name%]",
           "description": "[%key:component::kroger_restock::services::scan_upc::fields::config_entry_id::description%]"
+        },
+        "already_in_cart": {
+          "name": "[%key:component::kroger_restock::services::scan_upc::fields::already_in_cart::name%]",
+          "description": "[%key:component::kroger_restock::services::scan_upc::fields::already_in_cart::description%]"
         }
       }
     },
@@ -443,6 +488,24 @@
         "missing": {
           "name": "Missing",
           "description": "Items that were expected but didn't arrive: list item IDs or names, e.g. \"eggs, milk\"."
+        }
+      }
+    },
+    "check_cart_item": {
+      "name": "Settle an unconfirmed cart item",
+      "description": "For an item whose cart push was interrupted (it may or may not be in your Kroger cart): confirm it's in the cart, push it again, or remove it from the list. Check the Kroger app first.",
+      "fields": {
+        "item_id": {
+          "name": "[%key:component::kroger_restock::services::resolve_item::fields::item_id::name%]",
+          "description": "[%key:component::kroger_restock::services::resolve_item::fields::item_id::description%]"
+        },
+        "action": {
+          "name": "Action",
+          "description": "confirm = it's in the cart (no cart call); push_again = it isn't, push it now; remove = take it off the list."
+        },
+        "config_entry_id": {
+          "name": "[%key:component::kroger_restock::services::scan_upc::fields::config_entry_id::name%]",
+          "description": "[%key:component::kroger_restock::services::scan_upc::fields::config_entry_id::description%]"
         }
       }
     }

@@ -16,7 +16,12 @@ SECTION_WAITING = "Waiting — check shelf"
 SECTION_REVIEW = "Needs review"
 
 # Statuses printed in the aisle-grouped main list.
-_MAIN_STATUSES = (ItemStatus.IN_CART, ItemStatus.HELD)
+_MAIN_STATUSES = (
+    ItemStatus.IN_CART,
+    ItemStatus.HELD,
+    ItemStatus.CHECK_CART,
+    ItemStatus.PUSHING,
+)
 _REVIEW_STATUSES = (ItemStatus.NEEDS_REVIEW, ItemStatus.UNMATCHED)
 
 

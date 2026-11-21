@@ -17,6 +17,8 @@ import homeassistant.helpers.config_validation as cv
 import voluptuous as vol
 
 from .const import (
+    ATTR_ACTION,
+    ATTR_ALREADY_IN_CART,
     ATTR_CONFIG_ENTRY_ID,
     ATTR_ITEM_ID,
     ATTR_MISSING,
@@ -26,10 +28,12 @@ from .const import (
     ATTR_SOURCE,
     ATTR_TARGET,
     ATTR_UPC,
+    CHECK_CART_ACTIONS,
     DOMAIN,
     PRINT_BOTH,
     PRINT_TARGETS,
     SERVICE_ADD_ITEM,
+    SERVICE_CHECK_CART_ITEM,
     SERVICE_CHECK_STOCK,
     SERVICE_MARK_CART_RECEIVED,
     SERVICE_PRINT_LIST,
@@ -48,9 +52,12 @@ if TYPE_CHECKING:
 _ENTRY = {vol.Optional(ATTR_CONFIG_ENTRY_ID): cv.string}
 _QTY = vol.All(vol.Coerce(int), vol.Range(min=1, max=99))
 
+_ALREADY = {vol.Optional(ATTR_ALREADY_IN_CART, default=False): cv.boolean}
+
 SCAN_SCHEMA = vol.Schema(
     {
         **_ENTRY,
+        **_ALREADY,
         vol.Required(ATTR_UPC): vol.All(vol.Coerce(str), cv.string),
         vol.Optional(ATTR_QUANTITY, default=1): _QTY,
         vol.Optional(ATTR_SOURCE, default=ItemSource.SCAN.value): vol.In(
@@ -61,6 +68,7 @@ SCAN_SCHEMA = vol.Schema(
 ADD_SCHEMA = vol.Schema(
     {
         **_ENTRY,
+        **_ALREADY,
         vol.Required(ATTR_NAME): cv.string,
         vol.Optional(ATTR_QUANTITY, default=1): _QTY,
         vol.Optional(ATTR_SOURCE, default=ItemSource.MANUAL.value): vol.In(
@@ -71,6 +79,7 @@ ADD_SCHEMA = vol.Schema(
 RESOLVE_SCHEMA = vol.Schema(
     {
         **_ENTRY,
+        **_ALREADY,
         vol.Required(ATTR_ITEM_ID): cv.string,
         vol.Required(ATTR_PRODUCT_ID): vol.All(vol.Coerce(str), cv.string),
     }
@@ -85,6 +94,13 @@ MARK_RECEIVED_SCHEMA = vol.Schema(
         vol.Optional(ATTR_MISSING): vol.Any(
             cv.string, vol.All(cv.ensure_list, [cv.string])
         ),
+    }
+)
+CHECK_CART_SCHEMA = vol.Schema(
+    {
+        **_ENTRY,
+        vol.Required(ATTR_ITEM_ID): cv.string,
+        vol.Required(ATTR_ACTION): vol.In(CHECK_CART_ACTIONS),
     }
 )
 READD_SCHEMA = vol.Schema({**_ENTRY, vol.Required(ATTR_ITEM_ID): cv.string})
@@ -126,6 +142,7 @@ async def _scan_upc(call: ServiceCall) -> ServiceResponse:
         call.data[ATTR_UPC],
         call.data[ATTR_QUANTITY],
         ItemSource(call.data[ATTR_SOURCE]),
+        already_in_cart=call.data[ATTR_ALREADY_IN_CART],
     )
     return _maybe(call, response)
 
@@ -135,13 +152,16 @@ async def _add_item(call: ServiceCall) -> ServiceResponse:
         call.data[ATTR_NAME],
         call.data[ATTR_QUANTITY],
         ItemSource(call.data[ATTR_SOURCE]),
+        already_in_cart=call.data[ATTR_ALREADY_IN_CART],
     )
     return _maybe(call, response)
 
 
 async def _resolve_item(call: ServiceCall) -> ServiceResponse:
     response = await _coordinator(call).async_resolve(
-        call.data[ATTR_ITEM_ID], call.data[ATTR_PRODUCT_ID]
+        call.data[ATTR_ITEM_ID],
+        call.data[ATTR_PRODUCT_ID],
+        already_in_cart=call.data[ATTR_ALREADY_IN_CART],
     )
     return _maybe(call, response)
 
@@ -176,6 +196,13 @@ async def _mark_cart_received(call: ServiceCall) -> ServiceResponse:
     return _maybe(call, result)
 
 
+async def _check_cart_item(call: ServiceCall) -> ServiceResponse:
+    result = await _coordinator(call).async_resolve_check_cart(
+        call.data[ATTR_ITEM_ID], call.data[ATTR_ACTION]
+    )
+    return _maybe(call, result)
+
+
 @callback
 def async_setup_services(hass: HomeAssistant) -> None:
     """Register the integration's actions."""
@@ -187,6 +214,7 @@ def async_setup_services(hass: HomeAssistant) -> None:
         (SERVICE_READD_ITEM, _readd_item, READD_SCHEMA),
         (SERVICE_CHECK_STOCK, _check_stock, SYNC_SCHEMA),
         (SERVICE_PRINT_LIST, _print_list, PRINT_SCHEMA),
+        (SERVICE_CHECK_CART_ITEM, _check_cart_item, CHECK_CART_SCHEMA),
         (SERVICE_MARK_CART_RECEIVED, _mark_cart_received, MARK_RECEIVED_SCHEMA),
     ):
         hass.services.async_register(

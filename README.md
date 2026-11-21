@@ -78,6 +78,14 @@ you've disabled the `my` integration, use
    **Integration**.
 3. Find **Kroger Restock** in HACS, download it, and restart Home Assistant.
 
+### Updating
+
+HACS only re-checks custom repositories about every 48 hours, so a new
+release can take up to two days to appear on its own. To check now: open
+**Kroger Restock** in HACS → **⋮ → Update information**, then **Download** (or
+update from **Settings → Updates**) and restart Home Assistant. Your list,
+settings and order history carry over.
+
 ## 3. Add the integration
 
 > **Do this on a computer.** On a phone, the switch between the Home
@@ -112,6 +120,8 @@ Home Assistant's list is the source of truth. Every item has a status:
 | Status | Meaning | Pushed to cart? |
 | --- | --- | --- |
 | `in_cart` | Found and in stock; pushed to your Kroger cart | Yes |
+| `pushing` | Cart call in progress (saved first, so a crash can't lose it) | In progress |
+| `check_cart` | A push was interrupted; may or may not be in the cart; confirm in Repairs | Unknown |
 | `waiting` | Found but temporarily out of stock | No |
 | `held` | Back in stock, waiting for the order-day window | Not yet |
 | `needs_review` | A text or produce match needs you to pick the product | No |
@@ -142,6 +152,19 @@ Home Assistant's list is the source of truth. Every item has a status:
   ("they shorted me at pickup"), checks stock again and pushes it again.
 - **No double pushes.** The integration records how many units of each item it
   has pushed. Syncing only sends what hasn't been sent yet.
+- **Saved before every cart call.** An item is written to disk as *pushing*
+  before the request goes to Kroger, and marked *in cart* only after Kroger
+  confirms. If Home Assistant restarts or crashes mid-push, or Kroger doesn't
+  answer, the item comes back as **May already be in your Kroger cart** (status
+  `check_cart`) instead of being lost or pushed twice. Check the Kroger app,
+  then settle it from **Settings → Repairs** (or the `check_cart_item`
+  action): **Confirm in cart**, **Push again**, or **Remove**.
+- **Already in the cart?** For something you added in the Kroger app (or that
+  reached the cart without being recorded), scan or add it with
+  `already_in_cart: true`. It's recorded as in the cart, with no cart call, so
+  it isn't added twice. This works with `scan_upc`, `add_item` and
+  `resolve_item`; a needs-review item added this way is recorded when you
+  resolve it.
 - In the to-do list, each item reads `Name (size) ×qty`. The description shows
   its status, e.g. `In cart · Aisle 12` or `Waiting on stock since Nov 21`.
   Editing the `×qty` part changes the quantity (and pushes the difference).
@@ -278,6 +301,19 @@ Re-checks every waiting item now and pushes held items if you're inside the
 order window. Returns `checked`, `back_in_stock`, `pushed`, `held`,
 `still_waiting` and `held_pushed`.
 
+### `kroger_restock.check_cart_item`
+
+Settles an item whose cart push was interrupted (`check_cart`): `item_id`,
+and `action` = `confirm` (it's in the cart; nothing is sent), `push_again`
+(it isn't; push now) or `remove` (take it off the list). Same as the Repairs
+fix flow.
+
+### `already_in_cart` option
+
+`scan_upc`, `add_item` and `resolve_item` accept `already_in_cart: true` to
+record an item that's already in your Kroger cart without calling Kroger.
+The response includes `already_in_cart: true`.
+
 ### `kroger_restock.mark_cart_received`
 
 Marks the in-cart items (fully pushed) as received after an order is picked up
@@ -360,23 +396,38 @@ So `shopping`, `out_for_delivery` and `cancelled` are supported but
 
 ### Setup
 
-1. **Settings → Devices & services → Add integration → IMAP**, and sign in to
-   the mailbox that gets your Kroger order emails. For Gmail, use an app
-   password.
-2. **Pick the right folder.** Gmail files recent Kroger receipts under the
-   **Promotions** tab. Over IMAP that's still INBOX, but only until you
-   archive it, and a filter that skips the inbox moves it out entirely.
-   Reliable choices:
-   - **Folder `[Gmail]/All Mail`** with **Search** `FROM krogermail.com`, or
-   - a Gmail filter `from:e.krogermail.com` → apply label `Kroger`, and
-     **Folder `Kroger`** in the IMAP settings.
+This setup is tested with Gmail. Give order tracking its **own** IMAP
+connection, so automations using any existing IMAP connection aren't
+affected.
 
-   Relying on **INBOX** breaks as soon as you archive mail.
-3. You don't need to turn on "message text" in the IMAP options: Kroger
-   Restock fetches the full message with `imap.fetch`. Turning on "headers"
-   lets it dedupe by Message-ID; without it, it dedupes by sender, subject
-   and date.
-4. In **Kroger Restock → Configure → Order tracking**, pick that IMAP account.
+1. **Gmail filter** (gmail.com → Settings → Filters and blocked addresses →
+   Create a new filter):
+   - **From:** `e.krogermail.com`
+   - Actions: **Apply the label** `Kroger` (create it), and **Never send it to
+     Spam**.
+   - **Don't** tick "Also apply filter to matching conversations": old orders
+     would be read as new ones.
+2. **New IMAP connection** (Settings → Devices & services → Add integration
+   → IMAP), signed in with a Gmail **app password**:
+   - **Folder:** `Kroger`
+   - **Search:** `FROM "e.krogermail.com"`. **Don't** use the default
+     `UnSeen UnDeleted`: once you open a Kroger email on your phone, an
+     `UnSeen` search skips it.
+   - In the connection's options, under message data for events, turn on
+     **text** and **headers**. Headers let Kroger Restock dedupe by
+     Message-ID.
+   - **Max message size:** the default (2048) is fine. Kroger Restock reads
+     the full message with `imap.fetch`, which isn't limited by that setting.
+   - Rename the connection to something you'll recognize (e.g. "Gmail –
+     Kroger orders"). HA names it after the account, so two connections to one
+     mailbox otherwise look the same.
+3. **Why not INBOX?** Gmail files recent Kroger receipts under the Promotions
+   tab, and archiving moves mail out of INBOX. A label (or `[Gmail]/All Mail`
+   with the same search) keeps working either way.
+
+4. In **Kroger Restock → Configure → Order tracking**, pick that connection.
+   Each choice is shown as *"<name> — folder: … · search: …"*. If the one you
+   pick searches `UnSeen` or watches INBOX, you'll get a warning first.
    - **Notify on order updates** (on by default): ready for pickup, cancelled,
      and **order picked up / delivered**, which asks *"Mark the N in-cart
      items received?"* Items are never checked off automatically, because the
@@ -605,6 +656,8 @@ These come from Kroger's public API:
 | Barcode normalization with iPhone scans | **Verified live** (13-digit codes with a leading 0 matched on the first candidate) |
 | `stockLevel` in product responses | **Verified live** (`HIGH` returned) |
 | Cart add | **Verified live** (pushed, `pushed_quantity: 1`; two national-brand items end to end) |
+| Store attributes (`store_name`, `store_address`, `location_id`) and the checklane aisle rule | **Verified live** (v0.8.0) |
+| Items and debug log level survive an update + restart | **Verified live** (v0.8.0) |
 | Kroger store-brand items | Not yet tested live |
 | Out-of-stock items live (waiting, then back in stock) | Not yet tested live |
 | Whether the cart accepts an out-of-stock UPC | Unknown (`tests/test_live_cart.py`, run locally). The integration never pushes out-of-stock items either way |

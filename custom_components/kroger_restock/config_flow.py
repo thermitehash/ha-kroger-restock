@@ -18,8 +18,6 @@ from homeassistant.helpers import config_entry_oauth2_flow
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.selector import (
     BooleanSelector,
-    ConfigEntrySelector,
-    ConfigEntrySelectorConfig,
     NumberSelector,
     NumberSelectorConfig,
     NumberSelectorMode,
@@ -277,12 +275,53 @@ def _notify_options(hass: HomeAssistant) -> list[str]:
     )
 
 
+def imap_entry_label(entry: ConfigEntry) -> str:
+    """'<title> — folder: <folder> · search: <search>'.
+
+    HA titles IMAP entries with the account username, so two connections to
+    one mailbox look identical; folder and search tell them apart.
+    """
+    folder = entry.data.get("folder", "INBOX")
+    search = entry.data.get("search", "UnSeen UnDeleted")
+    return f"{entry.title} — folder: {folder} · search: {search}"
+
+
+def imap_entry_options(hass: HomeAssistant) -> list[SelectOptionDict]:
+    """IMAP entries to choose from, labelled with folder and search."""
+    return [
+        SelectOptionDict(value=entry.entry_id, label=imap_entry_label(entry))
+        for entry in hass.config_entries.async_entries("imap")
+    ]
+
+
+def imap_entry_warnings(hass: HomeAssistant, entry_id: str) -> list[str]:
+    """Problems with an IMAP entry that would make it miss order emails."""
+    if not entry_id or (entry := hass.config_entries.async_get_entry(entry_id)) is None:
+        return []
+    warnings = []
+    search = str(entry.data.get("search", "UnSeen UnDeleted"))
+    folder = str(entry.data.get("folder", "INBOX"))
+    if "unseen" in search.lower():
+        warnings.append(
+            f'Its search ("{search}") includes UnSeen: once you open a Kroger email '
+            "on your phone, Home Assistant never sees it. Use a search like "
+            'FROM "e.krogermail.com" instead.'
+        )
+    if folder.upper() == "INBOX":
+        warnings.append(
+            "It watches INBOX: archived emails (and Gmail receipts filed away by a "
+            "filter) are missed. Use a label such as Kroger or [Gmail]/All Mail."
+        )
+    return warnings
+
+
 class KrogerRestockOptionsFlow(OptionsFlowWithReload):
     """Change the store, modality and behaviour settings."""
 
     def __init__(self) -> None:
         """Initialize."""
         self._locations: dict[str, Location] = {}
+        self._pending_options: dict[str, Any] | None = None
 
     def _get(self, key: str, default: Any) -> Any:
         if key in self.config_entry.options:
@@ -498,13 +537,22 @@ class KrogerRestockOptionsFlow(OptionsFlowWithReload):
             data[CONF_EXTRA_SENDER_DOMAINS] = (
                 user_input.get(CONF_EXTRA_SENDER_DOMAINS) or ""
             ).strip()
+            warnings = imap_entry_warnings(self.hass, data[CONF_IMAP_ENTRY])
+            if warnings:
+                self._pending_options = data
+                return await self.async_step_orders_confirm()
             return self.async_create_entry(data=data)
         schema = vol.Schema(
             {
                 vol.Optional(
                     CONF_IMAP_ENTRY,
                     description={"suggested_value": self._get(CONF_IMAP_ENTRY, None)},
-                ): ConfigEntrySelector(ConfigEntrySelectorConfig(integration="imap")),
+                ): SelectSelector(
+                    SelectSelectorConfig(
+                        options=imap_entry_options(self.hass),
+                        mode=SelectSelectorMode.LIST,
+                    )
+                ),
                 vol.Required(
                     CONF_NOTIFY_ORDERS,
                     default=self._get(CONF_NOTIFY_ORDERS, DEFAULT_NOTIFY_ORDERS),
@@ -518,3 +566,19 @@ class KrogerRestockOptionsFlow(OptionsFlowWithReload):
             }
         )
         return self.async_show_form(step_id="orders", data_schema=schema)
+
+    async def async_step_orders_confirm(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Warn about an IMAP entry that will miss order emails."""
+        data = self._pending_options or {}
+        if user_input is not None:
+            return self.async_create_entry(data=data)
+        warnings = imap_entry_warnings(self.hass, data.get(CONF_IMAP_ENTRY, ""))
+        return self.async_show_form(
+            step_id="orders_confirm",
+            data_schema=vol.Schema({}),
+            description_placeholders={
+                "warnings": "\n".join(f"- {w}" for w in warnings)
+            },
+        )

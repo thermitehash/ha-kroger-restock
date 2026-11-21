@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 from custom_components.kroger_restock.api import (
@@ -93,6 +94,8 @@ class FakeKrogerApi:
         self.search_calls: list[str] = []
         self.location_calls: list[str] = []
         self.fail_cart: Exception | None = None
+        # Called at the moment of the cart call (before it "succeeds").
+        self.on_cart: Callable[[list[CartItem]], None] | None = None
         self.call_counts: dict[str, int] = {}
         self.products_use_app_token = False
         self.profile_id = "profile-123"
@@ -133,6 +136,8 @@ class FakeKrogerApi:
 
     async def async_add_to_cart(self, items: list[CartItem]) -> None:
         """Record a cart push."""
+        if self.on_cart is not None:
+            self.on_cart(items)
         if self.fail_cart is not None:
             raise self.fail_cart
         self.cart_calls.append(list(items))
