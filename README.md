@@ -18,7 +18,7 @@ on the list as **waiting**. Nothing leaves the list until you check it off.
 lookup, the to-do list, cart push, the scan event, stock re-checks, order-day
 holds, the give-up flag, notifications, and printing to a receipt printer or a
 letter-size PDF, plus a blueprint, example automations and an iOS Shortcut
-guide. The ESPHome wall scanner comes next. See [Roadmap](#roadmap).
+guide, and an ESPHome wall scanner. See [Roadmap](#roadmap).
 
 <!-- Screenshot placeholder: the to-do list card -->
 <!-- ![Grocery list](docs/screenshots/todo.png) -->
@@ -345,6 +345,12 @@ Or import it manually: **Settings → Automations & scenes → Blueprints →
 Import blueprint**, and paste
 `https://github.com/thrivestorm2/ha-kroger-restock/blob/main/blueprints/automation/kroger_restock/arrive_at_store.yaml`.
 
+### ESPHome wall scanner
+
+An ESP32 with a GM65 or GM861 barcode module that scans straight to the list,
+with buzzer and LED feedback and an optional print button. See
+[`esphome/README.md`](esphome/README.md) for parts, wiring and setup.
+
 ### Example automations
 
 In [`examples/`](examples/). Paste one into a new automation with
@@ -440,7 +446,7 @@ the real cart.
    notifications, `readd_item`, check-stock button
 3. ✅ Printing: ESC/POS receipt printer and letter-size PDF over IPP
 4. ✅ Blueprint, example automations, iOS Shortcut guide
-5. ESPHome wall scanner
+5. ✅ ESPHome wall scanner ([`esphome/`](esphome/))
 
 ## License
 

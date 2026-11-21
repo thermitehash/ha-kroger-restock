@@ -1,0 +1,199 @@
+# Kroger Restock wall scanner
+#
+# ESP32 + GM65 or GM861 UART barcode module. Each scan calls the
+# kroger_restock.scan_upc action in Home Assistant with source: esphome.
+# A buzzer and two LEDs give success / waiting / error feedback, driven by
+# the included Home Assistant automation (ha_feedback_automation.yaml).
+#
+# IMPORTANT: after adopting the device in Home Assistant, open
+#   Settings → Devices & services → ESPHome → (this device) → Configure
+# and turn on "Allow the device to perform Home Assistant actions".
+# Without it, scans are silently dropped.
+#
+# See README.md in this folder for wiring and parts.
+
+substitutions:
+  name: kroger-scanner
+  friendly_name: Kroger Scanner
+  # Pins (see the wiring table in README.md)
+  scanner_rx_pin: GPIO16 # ESP32 RX  <- scanner TX
+  scanner_tx_pin: GPIO17 # ESP32 TX  -> scanner RX
+  scanner_baud: "9600" # GM65 / GM861 factory default
+  buzzer_pin: GPIO25
+  led_green_pin: GPIO26
+  led_red_pin: GPIO27
+  print_button_pin: GPIO33
+
+esphome:
+  name: ${name}
+  friendly_name: ${friendly_name}
+  project:
+    name: kroger_restock.wall_scanner
+    version: "1.0.0"
+
+esp32:
+  board: esp32dev
+  framework:
+    type: esp-idf
+
+logger:
+
+api:
+  encryption:
+    key: !secret kroger_scanner_api_key
+  actions:
+    # Called by the Home Assistant automation on kroger_restock_scanned.
+    # result: in_cart | waiting | unmatched | needs_review | duplicate | error
+    - action: feedback
+      variables:
+        result: string
+      then:
+        - lambda: |-
+            if (result == "in_cart" || result == "duplicate") {
+              id(feedback_success).execute();
+            } else if (result == "waiting") {
+              id(feedback_waiting).execute();
+            } else {
+              id(feedback_error).execute();
+            }
+
+ota:
+  # Updates are protected by the API encryption key above.
+  - platform: esphome
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  ap:
+    ssid: "${friendly_name} Fallback"
+    password: !secret kroger_scanner_fallback_password
+
+captive_portal:
+
+uart:
+  id: scanner_uart
+  rx_pin: ${scanner_rx_pin}
+  tx_pin: ${scanner_tx_pin}
+  baud_rate: ${scanner_baud}
+  # The scanner sends each code followed by CR (factory default). The UART
+  # debugger with a dummy receiver works as a small line buffer: it collects
+  # bytes until the delimiter and hands us the whole line.
+  debug:
+    direction: RX
+    dummy_receiver: true
+    after:
+      delimiter: "\r"
+    sequence:
+      - lambda: |-
+          std::string code;
+          for (uint8_t b : bytes) {
+            if (b >= '0' && b <= '9') code += static_cast<char>(b);
+          }
+          // Ignore stray LF/CR-only lines and anything too short to be a
+          // UPC/EAN or PLU.
+          if (code.size() >= 4) {
+            id(last_barcode).publish_state(code);
+            id(send_scan).execute(code);
+          }
+
+output:
+  - platform: ledc
+    id: buzzer_output
+    pin: ${buzzer_pin}
+  - platform: gpio
+    id: led_green
+    pin: ${led_green_pin}
+  - platform: gpio
+    id: led_red
+    pin: ${led_red_pin}
+
+rtttl:
+  output: buzzer_output
+
+text_sensor:
+  - platform: template
+    id: last_barcode
+    name: Last barcode
+    icon: mdi:barcode-scan
+
+binary_sensor:
+  - platform: gpio
+    id: print_button
+    name: Print button
+    pin:
+      number: ${print_button_pin}
+      mode: INPUT_PULLUP
+      inverted: true
+    filters:
+      - delayed_on: 30ms
+    on_press:
+      - if:
+          condition:
+            api.connected:
+          then:
+            - homeassistant.action:
+                action: kroger_restock.print_list
+                data:
+                  target: receipt
+            - script.execute: feedback_success
+          else:
+            - script.execute: feedback_error
+
+script:
+  - id: send_scan
+    mode: queued
+    parameters:
+      code: string
+    then:
+      - if:
+          condition:
+            api.connected:
+          then:
+            - homeassistant.action:
+                action: kroger_restock.scan_upc
+                data:
+                  upc: !lambda "return code;"
+                  source: esphome
+            # Quick "heard you" blip; the real result comes back from HA via
+            # the feedback action a moment later.
+            - output.turn_on: led_green
+            - delay: 60ms
+            - output.turn_off: led_green
+          else:
+            - script.execute: feedback_error
+
+  # Success: short rising chirp, green LED
+  - id: feedback_success
+    mode: restart
+    then:
+      - output.turn_off: led_red
+      - output.turn_on: led_green
+      - rtttl.play: "ok:d=16,o=6,b=200:c,e,g"
+      - delay: 600ms
+      - output.turn_off: led_green
+
+  # Waiting (out of stock, kept on the list): two medium beeps, both LEDs
+  # (amber-ish)
+  - id: feedback_waiting
+    mode: restart
+    then:
+      - output.turn_on: led_green
+      - output.turn_on: led_red
+      - rtttl.play: "wait:d=8,o=5,b=160:e,p,e"
+      - delay: 900ms
+      - output.turn_off: led_green
+      - output.turn_off: led_red
+
+  # Error / unmatched / needs review: long low tone, red LED blinks 3 times
+  - id: feedback_error
+    mode: restart
+    then:
+      - output.turn_off: led_green
+      - rtttl.play: "err:d=4,o=4,b=100:c,p,c"
+      - repeat:
+          count: 3
+          then:
+            - output.turn_on: led_red
+            - delay: 200ms
+            - output.turn_off: led_red
+            - delay: 150ms

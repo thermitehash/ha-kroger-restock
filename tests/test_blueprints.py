@@ -14,7 +14,10 @@ import pytest
 
 ROOT = Path(__file__).parent.parent
 BLUEPRINT = ROOT / "blueprints/automation/kroger_restock/arrive_at_store.yaml"
-EXAMPLES = sorted((ROOT / "examples").glob("*.yaml"))
+EXAMPLES = [
+    *sorted((ROOT / "examples").glob("*.yaml")),
+    ROOT / "esphome" / "ha_feedback_automation.yaml",
+]
 
 
 def test_blueprint_schema() -> None:

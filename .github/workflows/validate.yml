@@ -38,6 +38,22 @@ jobs:
       - run: ruff format --check .
       - run: ruff check .
 
+  esphome:
+    name: ESPHome config
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - run: pip install esphome
+      - name: Validate kroger-scanner.yaml
+        working-directory: esphome
+        run: |
+          sed "s|PASTE-YOUR-GENERATED-KEY-HERE|$(openssl rand -base64 32)|" \
+            secrets.example.yaml > secrets.yaml
+          esphome config kroger-scanner.yaml > /dev/null
+
   tests:
     name: Pytest
     runs-on: ubuntu-latest

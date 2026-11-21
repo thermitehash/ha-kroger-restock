@@ -8,3 +8,7 @@ htmlcov/
 venv/
 *.egg-info/
 .DS_Store
+
+# ESPHome
+esphome/secrets.yaml
+esphome/.esphome/

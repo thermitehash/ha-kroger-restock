@@ -1,0 +1,19 @@
+# Home Assistant automation: send each wall-scanner result back to the
+# scanner so it can beep / light up.
+#
+# Paste into Settings → Automations → Create automation → ⋮ → Edit in YAML.
+# The action name is esphome.<device name>_feedback; with the default name
+# "kroger-scanner" it is esphome.kroger_scanner_feedback.
+alias: Kroger Restock - wall scanner feedback
+description: Play the success / waiting / error pattern on the ESPHome scanner.
+mode: queued
+max: 10
+triggers:
+  - trigger: event
+    event_type: kroger_restock_scanned
+    event_data:
+      source: esphome
+actions:
+  - action: esphome.kroger_scanner_feedback
+    data:
+      result: "{{ trigger.event.data.result }}"
