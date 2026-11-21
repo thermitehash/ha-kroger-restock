@@ -31,6 +31,12 @@
       },
       "check_stock": {
         "default": "mdi:store-search"
+      },
+      "print_receipt": {
+        "default": "mdi:receipt-text-outline"
+      },
+      "print_pdf": {
+        "default": "mdi:file-pdf-box"
       }
     }
   },
@@ -52,6 +58,9 @@
     },
     "check_stock": {
       "service": "mdi:store-search"
+    },
+    "print_list": {
+      "service": "mdi:printer"
     }
   }
 }

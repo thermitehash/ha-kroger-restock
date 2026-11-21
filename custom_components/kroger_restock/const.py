@@ -27,6 +27,17 @@ CONF_GIVE_UP_DAYS: Final = "give_up_days"
 CONF_ORDER_DAYS: Final = "order_days"
 CONF_LEAD_TIME_DAYS: Final = "lead_time_days"
 CONF_NOTIFY_TARGETS: Final = "notify_targets"
+CONF_RECEIPT_HOST: Final = "receipt_host"
+CONF_RECEIPT_PORT: Final = "receipt_port"
+CONF_PAPER_WIDTH: Final = "paper_width"
+CONF_IPP_URL: Final = "ipp_url"
+CONF_SAVE_PDF: Final = "save_pdf"
+
+DEFAULT_RECEIPT_PORT: Final = 9100
+DEFAULT_PAPER_WIDTH: Final = "80"
+PAPER_WIDTHS: Final = ("58", "80")
+DEFAULT_SAVE_PDF: Final = True
+PDF_SUBDIR: Final = "kroger_restock"
 
 # Option values (lowercase for translations); the API wants them uppercased.
 MODALITY_PICKUP: Final = "pickup"
@@ -54,6 +65,12 @@ SERVICE_RESOLVE_ITEM: Final = "resolve_item"
 SERVICE_SYNC: Final = "sync"
 SERVICE_READD_ITEM: Final = "readd_item"
 SERVICE_CHECK_STOCK: Final = "check_stock"
+SERVICE_PRINT_LIST: Final = "print_list"
+
+PRINT_RECEIPT: Final = "receipt"
+PRINT_PDF: Final = "pdf"
+PRINT_BOTH: Final = "both"
+PRINT_TARGETS: Final = (PRINT_RECEIPT, PRINT_PDF, PRINT_BOTH)
 
 ATTR_CONFIG_ENTRY_ID: Final = "config_entry_id"
 ATTR_UPC: Final = "upc"
@@ -62,6 +79,7 @@ ATTR_SOURCE: Final = "source"
 ATTR_NAME: Final = "name"
 ATTR_ITEM_ID: Final = "item_id"
 ATTR_PRODUCT_ID: Final = "product_id"
+ATTR_TARGET: Final = "target"
 
 SEARCH_LIMIT: Final = 10
 MAX_REVIEW_CANDIDATES: Final = 5

@@ -71,7 +71,8 @@
         "title": "Kroger Restock options",
         "menu_options": {
           "settings": "Settings",
-          "store": "Change store"
+          "store": "Change store",
+          "printing": "Printing"
         }
       },
       "settings": {
@@ -113,12 +114,31 @@
         "data_description": {
           "location_id": "[%key:component::kroger_restock::config::step::pick_store::data_description::location_id%]"
         }
+      },
+      "printing": {
+        "title": "Printing",
+        "description": "Both printouts group items by aisle, then list waiting and needs-review items.",
+        "data": {
+          "receipt_host": "Receipt printer host",
+          "receipt_port": "Receipt printer port",
+          "paper_width": "Paper width",
+          "ipp_url": "PDF printer (IPP URL)",
+          "save_pdf": "Save PDFs to /media/kroger_restock"
+        },
+        "data_description": {
+          "receipt_host": "IP address or hostname of an ESC/POS network printer. Leave empty if you don't have one.",
+          "receipt_port": "Raw printing port, usually 9100.",
+          "paper_width": "58 mm prints 32 columns; 80 mm prints 48.",
+          "ipp_url": "For example ipp://printer.local/ipp/print. Leave empty to only save the PDF.",
+          "save_pdf": "Keep a copy of every PDF in the media folder."
+        }
       }
     },
     "error": {
       "invalid_zip": "[%key:component::kroger_restock::config::error::invalid_zip%]",
       "no_stores": "[%key:component::kroger_restock::config::error::no_stores%]",
-      "cannot_connect": "[%key:common::config_flow::error::cannot_connect%]"
+      "cannot_connect": "[%key:common::config_flow::error::cannot_connect%]",
+      "invalid_ipp_url": "Enter a URL starting with ipp://, ipps://, http:// or https://."
     }
   },
   "selector": {
@@ -146,6 +166,19 @@
         "esphome": "ESPHome scanner",
         "manual": "Manual",
         "assist": "Assist"
+      }
+    },
+    "paper_width": {
+      "options": {
+        "58": "58 mm (32 columns)",
+        "80": "80 mm (48 columns)"
+      }
+    },
+    "print_target": {
+      "options": {
+        "receipt": "Receipt printer",
+        "pdf": "PDF",
+        "both": "Both"
       }
     }
   },
@@ -186,6 +219,12 @@
       },
       "check_stock": {
         "name": "Check stock now"
+      },
+      "print_receipt": {
+        "name": "Print receipt"
+      },
+      "print_pdf": {
+        "name": "Print PDF"
       }
     }
   },
@@ -222,6 +261,12 @@
     },
     "multiple_entries": {
       "message": "More than one Kroger Restock entry is loaded; choose one with config_entry_id."
+    },
+    "no_receipt_printer": {
+      "message": "No receipt printer is set up. Add one under the integration's options → Printing."
+    },
+    "print_failed": {
+      "message": "Printing failed: {error}"
     }
   },
   "issues": {
@@ -339,6 +384,20 @@
       "name": "Check stock",
       "description": "Re-checks every waiting item now. Items back in stock are pushed to the cart, or held until the order window if order days are set.",
       "fields": {
+        "config_entry_id": {
+          "name": "[%key:component::kroger_restock::services::scan_upc::fields::config_entry_id::name%]",
+          "description": "[%key:component::kroger_restock::services::scan_upc::fields::config_entry_id::description%]"
+        }
+      }
+    },
+    "print_list": {
+      "name": "Print list",
+      "description": "Prints the list grouped by aisle, with waiting and needs-review sections, to the receipt printer, as a letter-size PDF, or both. PDFs are saved to /media/kroger_restock and sent to the IPP printer if one is set.",
+      "fields": {
+        "target": {
+          "name": "Print to",
+          "description": "Receipt printer, PDF, or both."
+        },
         "config_entry_id": {
           "name": "[%key:component::kroger_restock::services::scan_upc::fields::config_entry_id::name%]",
           "description": "[%key:component::kroger_restock::services::scan_upc::fields::config_entry_id::description%]"

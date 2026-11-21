@@ -23,16 +23,21 @@ from .const import (
     ATTR_PRODUCT_ID,
     ATTR_QUANTITY,
     ATTR_SOURCE,
+    ATTR_TARGET,
     ATTR_UPC,
     DOMAIN,
+    PRINT_BOTH,
+    PRINT_TARGETS,
     SERVICE_ADD_ITEM,
     SERVICE_CHECK_STOCK,
+    SERVICE_PRINT_LIST,
     SERVICE_READD_ITEM,
     SERVICE_RESOLVE_ITEM,
     SERVICE_SCAN_UPC,
     SERVICE_SYNC,
     ItemSource,
 )
+from .printer import async_print
 
 if TYPE_CHECKING:
     from .coordinator import KrogerRestockCoordinator
@@ -68,6 +73,9 @@ RESOLVE_SCHEMA = vol.Schema(
     }
 )
 SYNC_SCHEMA = vol.Schema(_ENTRY)
+PRINT_SCHEMA = vol.Schema(
+    {**_ENTRY, vol.Optional(ATTR_TARGET, default=PRINT_BOTH): vol.In(PRINT_TARGETS)}
+)
 READD_SCHEMA = vol.Schema({**_ENTRY, vol.Required(ATTR_ITEM_ID): cv.string})
 
 
@@ -144,6 +152,11 @@ async def _check_stock(call: ServiceCall) -> ServiceResponse:
     return _maybe(call, result)
 
 
+async def _print_list(call: ServiceCall) -> ServiceResponse:
+    result = await async_print(_coordinator(call), call.data[ATTR_TARGET])
+    return _maybe(call, result)
+
+
 @callback
 def async_setup_services(hass: HomeAssistant) -> None:
     """Register the integration's actions."""
@@ -154,6 +167,7 @@ def async_setup_services(hass: HomeAssistant) -> None:
         (SERVICE_SYNC, _sync, SYNC_SCHEMA),
         (SERVICE_READD_ITEM, _readd_item, READD_SCHEMA),
         (SERVICE_CHECK_STOCK, _check_stock, SYNC_SCHEMA),
+        (SERVICE_PRINT_LIST, _print_list, PRINT_SCHEMA),
     ):
         hass.services.async_register(
             DOMAIN,

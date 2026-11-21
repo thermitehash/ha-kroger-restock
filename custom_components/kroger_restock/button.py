@@ -7,8 +7,10 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from . import KrogerConfigEntry
+from .const import PRINT_PDF, PRINT_RECEIPT
 from .coordinator import KrogerRestockCoordinator
 from .entity import KrogerRestockEntity
+from .printer import async_print
 
 PARALLEL_UPDATES = 1
 
@@ -20,7 +22,14 @@ async def async_setup_entry(
 ) -> None:
     """Set up buttons."""
     coordinator = entry.runtime_data.coordinator
-    async_add_entities([SyncButton(coordinator), CheckStockButton(coordinator)])
+    async_add_entities(
+        [
+            SyncButton(coordinator),
+            CheckStockButton(coordinator),
+            PrintButton(coordinator, PRINT_RECEIPT),
+            PrintButton(coordinator, PRINT_PDF),
+        ]
+    )
 
 
 class SyncButton(KrogerRestockEntity, ButtonEntity):
@@ -50,3 +59,17 @@ class CheckStockButton(KrogerRestockEntity, ButtonEntity):
         """Handle the press."""
         await self.coordinator.async_check_stock()
         await self.coordinator.async_push_held()
+
+
+class PrintButton(KrogerRestockEntity, ButtonEntity):
+    """Print the list to the receipt printer or as a PDF."""
+
+    def __init__(self, coordinator: KrogerRestockCoordinator, target: str) -> None:
+        """Initialize."""
+        super().__init__(coordinator, f"print_{target}")
+        self._target = target
+        self._attr_translation_key = f"print_{target}"
+
+    async def async_press(self) -> None:
+        """Handle the press."""
+        await async_print(self.coordinator, self._target)

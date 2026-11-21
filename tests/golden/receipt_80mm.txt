@@ -1,0 +1,34 @@
+<INIT><CENTER><B>GROCERY LIST
+</B>Kroger Downtown - 1 Main St, Cincinnati, OH
+Sat Nov 21, 2026 3:05 PM
+<LEFT>================================================
+
+<B>Aisle 3 - Oils & Vinegar
+</B>[ ] Simple Truth Organic Extra Virgin Olive Oil
+    Cold Pressed Imported From Italy (16.9 fl
+    oz)
+
+<B>Aisle 7 - Soda
+</B>[ ] Coca-Cola Classic Soda (12 pk / 12 fl oz) x2
+
+<B>Aisle 12 - Dairy
+</B>[ ] Kroger 2% Reduced Fat Milk (1 gal)
+[ ] Large Grade A Eggs (12 ct)
+
+<B>Produce
+</B>[ ] Bananas (1 lb)
+
+<B>Other
+</B>[ ] Birthday candles
+
+<B>Waiting - check shelf
+</B>[ ] H„agen-Dazs Vanilla Ice Cream (14 oz)
+[ ] Caf‚ Bustelo Espresso (10 oz)
+
+<B>Needs review
+</B>[ ] milk
+[ ] 012345678905
+
+================================================
+<CENTER>10 items
+<LEFT><CUT>

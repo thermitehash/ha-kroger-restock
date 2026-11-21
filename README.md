@@ -14,10 +14,10 @@ on the list as **waiting**. Nothing leaves the list until you check it off.
 > developer API. It is not endorsed by, sponsored by or affiliated with The
 > Kroger Co.
 
-**Status:** Phases 1–2 are done: sign-in, store selection, barcode and text
+**Status:** Phases 1–3 are done: sign-in, store selection, barcode and text
 lookup, the to-do list, cart push, the scan event, stock re-checks, order-day
-holds, the give-up flag and notifications. Printing, examples and the ESPHome
-scanner come next. See [Roadmap](#roadmap).
+holds, the give-up flag, notifications, and printing to a receipt printer or a
+letter-size PDF. Examples and the ESPHome scanner come next. See [Roadmap](#roadmap).
 
 <!-- Screenshot placeholder: the to-do list card -->
 <!-- ![Grocery list](docs/screenshots/todo.png) -->
@@ -154,8 +154,8 @@ Successful matches are remembered, and so is any fix you make with
 | `sensor.<store>_last_stock_check` | When stock was last checked |
 | `button.<store>_sync_now` | Push any pending cart items |
 | `button.<store>_check_stock_now` | Re-check waiting items now |
-
-Print buttons arrive in Phase 3.
+| `button.<store>_print_receipt` | Print to the receipt printer |
+| `button.<store>_print_pdf` | Make (and print) the letter-size PDF |
 
 ## Actions
 
@@ -228,6 +228,13 @@ Re-checks every waiting item now and pushes held items if you're inside the
 order window. Returns `checked`, `back_in_stock`, `pushed`, `held`,
 `still_waiting` and `held_pushed`.
 
+### `kroger_restock.print_list`
+
+Prints the list. `target`: `receipt`, `pdf` or `both` (default). Returns
+`items`, `receipt` (`printed`, `failed` or `not_configured`) and `pdf`
+(`path` of the saved file and whether it was `printed`). See
+[Printing](#printing).
+
 ## Events
 
 ### `kroger_restock_scanned`
@@ -262,6 +269,33 @@ actions:
 Fired when a stock check finds waiting items back in stock. Data: `pushed` and
 `held` (lists of `{item_id, name}`) and `config_entry_id`.
 
+## Printing
+
+Both printouts use the same layout:
+
+- A header with the date and your store
+- Items in your cart (and held items) grouped by aisle, in aisle order, with a
+  checkbox, name, size and quantity. Items with no aisle come last under
+  **Other**.
+- **Waiting — check shelf:** out-of-stock items, in case they're on the shelf
+  anyway
+- **Needs review:** unmatched and needs-review items
+- A footer with the item count
+
+**Receipt printer (ESC/POS).** Any network thermal printer that accepts raw
+jobs on port 9100 works; no driver is needed. The integration sends plain
+ESC/POS: initialize, bold headers, word-wrapped lines and a paper cut. Choose
+58 mm (32 columns) or 80 mm (48 columns) paper.
+
+**Letter-size PDF.** Every PDF is saved to `/media/kroger_restock/` (turn this
+off in options), so you can open it from **Media → My media**. If you enter an
+IPP printer URL (for example `ipp://printer.local/ipp/print`, or `ipps://…`),
+the PDF is also sent as an IPP Print-Job. Most network printers made in the
+last decade support IPP and PDF; if yours doesn't accept PDF, use the saved
+file instead.
+
+<!-- Screenshot placeholder: receipt and PDF printouts -->
+
 ## Options
 
 **Settings → Devices & services → Kroger Restock → Configure**:
@@ -277,6 +311,13 @@ Fired when a stock check finds waiting items back in stock. Data: `pushed` and
 - **Give-up after** (default 30 days)
 - **Notification targets:** `notify.mobile_app_*` actions. With none chosen,
   you get a persistent notification in Home Assistant instead.
+
+**Printing** (its own page in the options menu):
+
+- **Receipt printer host** and **port** (default 9100)
+- **Paper width:** 58 mm or 80 mm (default 80 mm)
+- **PDF printer (IPP URL):** optional
+- **Save PDFs to /media/kroger_restock** (default on)
 
 ## Limitations
 
@@ -320,6 +361,7 @@ python3.14 -m venv .venv && . .venv/bin/activate
 pip install -r requirements_test.txt
 ruff format . && ruff check .
 pytest
+UPDATE_GOLDEN=1 pytest tests/test_printing.py   # after changing a print layout
 python script/gen_translations.py   # after editing strings.json
 node script/render_icons.js         # after editing assets/*.svg
 ```
@@ -336,7 +378,7 @@ the real cart.
    cart push, scan event, tests, CI
 2. ✅ Stock re-checks, `held` and order-day window, give-up flag,
    notifications, `readd_item`, check-stock button
-3. Printing: ESC/POS receipt printer and letter-size PDF over IPP
+3. ✅ Printing: ESC/POS receipt printer and letter-size PDF over IPP
 4. Blueprint, example automations, iOS Shortcut guide
 5. ESPHome wall scanner
 

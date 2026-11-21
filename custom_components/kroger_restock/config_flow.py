@@ -16,6 +16,7 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import config_entry_oauth2_flow
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.selector import (
+    BooleanSelector,
     NumberSelector,
     NumberSelectorConfig,
     NumberSelectorMode,
@@ -24,6 +25,8 @@ from homeassistant.helpers.selector import (
     SelectSelectorConfig,
     SelectSelectorMode,
     TextSelector,
+    TextSelectorConfig,
+    TextSelectorType,
 )
 import voluptuous as vol
 
@@ -32,21 +35,30 @@ from .application_credentials import KrogerOAuth2Implementation
 from .const import (
     CONF_DEBOUNCE_SECONDS,
     CONF_GIVE_UP_DAYS,
+    CONF_IPP_URL,
     CONF_LEAD_TIME_DAYS,
     CONF_LOCATION_ID,
     CONF_LOCATION_NAME,
     CONF_MODALITY,
     CONF_NOTIFY_TARGETS,
     CONF_ORDER_DAYS,
+    CONF_PAPER_WIDTH,
+    CONF_RECEIPT_HOST,
+    CONF_RECEIPT_PORT,
+    CONF_SAVE_PDF,
     CONF_STOCK_CHECK_HOURS,
     CONF_ZIP_CODE,
     DEFAULT_DEBOUNCE_SECONDS,
     DEFAULT_GIVE_UP_DAYS,
     DEFAULT_LEAD_TIME_DAYS,
     DEFAULT_MODALITY,
+    DEFAULT_PAPER_WIDTH,
+    DEFAULT_RECEIPT_PORT,
+    DEFAULT_SAVE_PDF,
     DEFAULT_STOCK_CHECK_HOURS,
     DOMAIN,
     MODALITIES,
+    PAPER_WIDTHS,
     WEEKDAYS,
 )
 
@@ -260,7 +272,9 @@ class KrogerRestockOptionsFlow(OptionsFlow):
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Choose what to change."""
-        return self.async_show_menu(step_id="init", menu_options=["settings", "store"])
+        return self.async_show_menu(
+            step_id="init", menu_options=["settings", "store", "printing"]
+        )
 
     async def async_step_settings(
         self, user_input: dict[str, Any] | None = None
@@ -390,4 +404,60 @@ class KrogerRestockOptionsFlow(OptionsFlow):
                     )
                 }
             ),
+        )
+
+    async def async_step_printing(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Receipt and PDF printer settings."""
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            url = (user_input.get(CONF_IPP_URL) or "").strip()
+            if url and not url.lower().startswith(
+                ("ipp://", "ipps://", "http://", "https://")
+            ):
+                errors[CONF_IPP_URL] = "invalid_ipp_url"
+            else:
+                data = {**self.config_entry.options, **user_input}
+                data[CONF_RECEIPT_HOST] = (
+                    user_input.get(CONF_RECEIPT_HOST) or ""
+                ).strip()
+                data[CONF_IPP_URL] = url
+                data[CONF_RECEIPT_PORT] = int(user_input[CONF_RECEIPT_PORT])
+                return self.async_create_entry(data=data)
+        schema = vol.Schema(
+            {
+                vol.Optional(
+                    CONF_RECEIPT_HOST,
+                    description={"suggested_value": self._get(CONF_RECEIPT_HOST, "")},
+                ): TextSelector(),
+                vol.Required(
+                    CONF_RECEIPT_PORT,
+                    default=self._get(CONF_RECEIPT_PORT, DEFAULT_RECEIPT_PORT),
+                ): NumberSelector(
+                    NumberSelectorConfig(
+                        min=1, max=65535, step=1, mode=NumberSelectorMode.BOX
+                    )
+                ),
+                vol.Required(
+                    CONF_PAPER_WIDTH,
+                    default=self._get(CONF_PAPER_WIDTH, DEFAULT_PAPER_WIDTH),
+                ): SelectSelector(
+                    SelectSelectorConfig(
+                        options=list(PAPER_WIDTHS),
+                        translation_key=CONF_PAPER_WIDTH,
+                        mode=SelectSelectorMode.LIST,
+                    )
+                ),
+                vol.Optional(
+                    CONF_IPP_URL,
+                    description={"suggested_value": self._get(CONF_IPP_URL, "")},
+                ): TextSelector(TextSelectorConfig(type=TextSelectorType.URL)),
+                vol.Required(
+                    CONF_SAVE_PDF, default=self._get(CONF_SAVE_PDF, DEFAULT_SAVE_PDF)
+                ): BooleanSelector(),
+            }
+        )
+        return self.async_show_form(
+            step_id="printing", data_schema=schema, errors=errors
         )

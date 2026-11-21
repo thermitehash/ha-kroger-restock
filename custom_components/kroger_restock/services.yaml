@@ -98,3 +98,19 @@ check_stock:
       selector:
         config_entry:
           integration: kroger_restock
+
+print_list:
+  fields:
+    target:
+      default: both
+      selector:
+        select:
+          translation_key: print_target
+          options:
+            - receipt
+            - pdf
+            - both
+    config_entry_id:
+      selector:
+        config_entry:
+          integration: kroger_restock
