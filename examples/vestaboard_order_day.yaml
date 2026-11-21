@@ -1,0 +1,35 @@
+# Put a one-line grocery summary on a Vestaboard on order day.
+#
+# Vestaboard's Read/Write API: enable it for your board in the Vestaboard app
+# (Settings → Developer → Read/Write API) to get a key, then add to
+# configuration.yaml (YAML-only; restart or reload REST commands after):
+#
+#   rest_command:
+#     vestaboard_message:
+#       url: https://rw.vestaboard.com/
+#       method: POST
+#       headers:
+#         X-Vestaboard-Read-Write-Key: !secret vestaboard_rw_key
+#       content_type: application/json
+#       payload: '{"text": "{{ text }}"}'
+#
+# and to secrets.yaml:
+#
+#   vestaboard_rw_key: your-key-here
+#
+# Change the weekday and sensor entity IDs to match your setup (the sensors
+# are named after your store).
+alias: Kroger Restock - Vestaboard on order day
+description: Morning summary of the grocery list on order day.
+mode: single
+triggers:
+  - trigger: time
+    at: "07:30:00"
+    weekday:
+      - sat
+actions:
+  - action: rest_command.vestaboard_message
+    data:
+      text: >-
+        Groceries today: {{ states('sensor.kroger_downtown_in_cart') | int(0) }} in cart,
+        {{ states('sensor.kroger_downtown_waiting_on_stock') | int(0) }} waiting

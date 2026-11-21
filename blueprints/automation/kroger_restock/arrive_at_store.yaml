@@ -1,0 +1,114 @@
+blueprint:
+  name: Kroger Restock — at the store
+  description: >
+    When a person enters a zone (your store), send their phone a notification
+    with how many items are in the cart, waiting on stock and needing review,
+    plus a link that opens the grocery list.
+
+    Not affiliated with Kroger.
+  domain: automation
+  author: Kroger Restock contributors
+  source_url: https://github.com/thrivestorm2/ha-kroger-restock/blob/main/blueprints/automation/kroger_restock/arrive_at_store.yaml
+  homeassistant:
+    min_version: "2026.11.0"
+  input:
+    who:
+      name: Who and where
+      icon: mdi:map-marker-account
+      input:
+        person:
+          name: Person
+          description: The person whose arrival triggers the notification.
+          selector:
+            entity:
+              domain: person
+        store_zone:
+          name: Store zone
+          description: A zone drawn around your store.
+          selector:
+            entity:
+              domain: zone
+        notify_device:
+          name: Phone to notify
+          description: A phone with the Home Assistant Companion app.
+          selector:
+            device:
+              integration: mobile_app
+    list:
+      name: Grocery list
+      icon: mdi:cart-variant
+      input:
+        grocery_list:
+          name: Grocery list
+          selector:
+            entity:
+              domain: todo
+              integration: kroger_restock
+        in_cart_sensor:
+          name: In-cart sensor
+          selector:
+            entity:
+              domain: sensor
+              integration: kroger_restock
+        waiting_sensor:
+          name: Waiting-on-stock sensor
+          selector:
+            entity:
+              domain: sensor
+              integration: kroger_restock
+        needs_review_sensor:
+          name: Needs-review sensor
+          selector:
+            entity:
+              domain: sensor
+              integration: kroger_restock
+    settings:
+      name: Settings
+      icon: mdi:cog
+      collapsed: true
+      input:
+        skip_when_empty:
+          name: Skip when the list is empty
+          default: true
+          selector:
+            boolean:
+
+mode: single
+max_exceeded: silent
+
+triggers:
+  - trigger: zone
+    entity_id: !input person
+    zone: !input store_zone
+    event: enter
+
+variables:
+  grocery_list: !input grocery_list
+  in_cart_sensor: !input in_cart_sensor
+  waiting_sensor: !input waiting_sensor
+  needs_review_sensor: !input needs_review_sensor
+  skip_when_empty: !input skip_when_empty
+  in_cart: "{{ states(in_cart_sensor) | int(0) }}"
+  waiting: "{{ states(waiting_sensor) | int(0) }}"
+  needs_review: "{{ states(needs_review_sensor) | int(0) }}"
+
+conditions:
+  - condition: template
+    value_template: "{{ not skip_when_empty or (in_cart + waiting + needs_review) > 0 }}"
+    note: "Counts come from three sensors, so a single native condition can't express the sum."
+
+actions:
+  - domain: mobile_app
+    type: notify
+    device_id: !input notify_device
+    title: "At the store"
+    message: >-
+      {{ in_cart }} in cart · {{ waiting }} waiting on stock (check the shelf)
+      {%- if needs_review %} · {{ needs_review }} to review{% endif %}
+    data:
+      url: "/todo?entity_id={{ grocery_list }}"
+      clickAction: "/todo?entity_id={{ grocery_list }}"
+      actions:
+        - action: URI
+          title: Open list
+          uri: "/todo?entity_id={{ grocery_list }}"

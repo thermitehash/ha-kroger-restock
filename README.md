@@ -17,7 +17,8 @@ on the list as **waiting**. Nothing leaves the list until you check it off.
 **Status:** Phases 1–3 are done: sign-in, store selection, barcode and text
 lookup, the to-do list, cart push, the scan event, stock re-checks, order-day
 holds, the give-up flag, notifications, and printing to a receipt printer or a
-letter-size PDF. Examples and the ESPHome scanner come next. See [Roadmap](#roadmap).
+letter-size PDF, plus a blueprint, example automations and an iOS Shortcut
+guide. The ESPHome wall scanner comes next. See [Roadmap](#roadmap).
 
 <!-- Screenshot placeholder: the to-do list card -->
 <!-- ![Grocery list](docs/screenshots/todo.png) -->
@@ -32,6 +33,9 @@ letter-size PDF. Examples and the ESPHome scanner come next. See [Roadmap](#road
 - [Entities](#entities)
 - [Actions](#actions)
 - [Events](#events)
+- [Printing](#printing)
+- [Scanning with an iPhone Shortcut](#scanning-with-an-iphone-shortcut)
+- [Blueprint and examples](#blueprint-and-examples)
 - [Options](#options)
 - [Limitations](#limitations)
 - [Troubleshooting](#troubleshooting)
@@ -296,6 +300,62 @@ file instead.
 
 <!-- Screenshot placeholder: receipt and PDF printouts -->
 
+## Scanning with an iPhone Shortcut
+
+Scan a barcode with your iPhone camera and add it straight to the list.
+
+1. Open the **Shortcuts** app and create a new shortcut named **Grocery scan**.
+2. Add **Scan QR or Barcode**.
+3. Add the Home Assistant app's **Perform Action** (called "Call Service" in
+   older app versions). Choose your server, then:
+   - **Action:** `kroger_restock.scan_upc`
+   - **Data:**
+     ```yaml
+     upc: <Scanned code>   # tap and insert the "QR/Barcode" variable
+     source: shortcut
+     ```
+   - Turn on **Return response** (or "Response data") if it's offered.
+4. Add **Show Result** (or **Show Notification**) and insert the action's
+   output. To show just the useful bits, add **Get Dictionary Value** for
+   `result`, `name` and `aisle` before it, e.g. *"in_cart: Coca-Cola Classic
+   Soda (Aisle 7)"*.
+5. Make it one tap away:
+   - **Action button** (iPhone 15 Pro and later): Settings → Action Button →
+     Shortcut → **Grocery scan**.
+   - **Back Tap** (any recent iPhone): Settings → Accessibility → Touch →
+     Back Tap → Double Tap → **Grocery scan**.
+
+The response `result` is `in_cart`, `waiting`, `unmatched`, `needs_review` or
+`duplicate`.
+
+<!-- Screenshot placeholder: the Shortcut -->
+
+## Blueprint and examples
+
+### "At the store" blueprint
+
+When a chosen person enters a chosen zone (draw one around your store under
+**Settings → Areas, labels & zones → Zones**), their phone gets a notification
+with the in-cart, waiting and needs-review counts and a link that opens the
+list.
+
+[![Open your Home Assistant instance and show the blueprint import dialog with a specific blueprint pre-filled.](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2Fthrivestorm2%2Fha-kroger-restock%2Fblob%2Fmain%2Fblueprints%2Fautomation%2Fkroger_restock%2Farrive_at_store.yaml)
+
+Or import it manually: **Settings → Automations & scenes → Blueprints →
+Import blueprint**, and paste
+`https://github.com/thrivestorm2/ha-kroger-restock/blob/main/blueprints/automation/kroger_restock/arrive_at_store.yaml`.
+
+### Example automations
+
+In [`examples/`](examples/). Paste one into a new automation with
+**⋮ → Edit in YAML**, then change the IDs marked in the comments.
+
+| File | What it does |
+| --- | --- |
+| [`nfc_print_receipt.yaml`](examples/nfc_print_receipt.yaml) | Tap an NFC tag (say, on the fridge) to print the list on the receipt printer |
+| [`vestaboard_order_day.yaml`](examples/vestaboard_order_day.yaml) | Put a one-line summary on a Vestaboard on order day |
+| [`notify_unmatched_scan.yaml`](examples/notify_unmatched_scan.yaml) | Notify your phone when a scanned barcode isn't in the catalog |
+
 ## Options
 
 **Settings → Devices & services → Kroger Restock → Configure**:
@@ -379,7 +439,7 @@ the real cart.
 2. ✅ Stock re-checks, `held` and order-day window, give-up flag,
    notifications, `readd_item`, check-stock button
 3. ✅ Printing: ESC/POS receipt printer and letter-size PDF over IPP
-4. Blueprint, example automations, iOS Shortcut guide
+4. ✅ Blueprint, example automations, iOS Shortcut guide
 5. ESPHome wall scanner
 
 ## License

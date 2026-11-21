@@ -1,0 +1,17 @@
+# Print the grocery list on the receipt printer when you tap an NFC tag
+# (for example one stuck to the fridge).
+#
+# 1. In the Companion app, write a tag: Settings → Tags → Add tag.
+# 2. Copy its tag ID into tag_id below.
+# 3. Paste this in Settings → Automations → Create automation → ⋮ → Edit in YAML.
+alias: Kroger Restock - print list from NFC tag
+description: Tap the fridge tag to print the grocery list on the receipt printer.
+mode: single
+max_exceeded: silent
+triggers:
+  - trigger: tag
+    tag_id: REPLACE-WITH-YOUR-TAG-ID
+actions:
+  - action: kroger_restock.print_list
+    data:
+      target: receipt
