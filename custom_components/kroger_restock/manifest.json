@@ -1,0 +1,13 @@
+{
+  "domain": "kroger_restock",
+  "name": "Kroger Restock",
+  "codeowners": ["@thrivestorm2"],
+  "config_flow": true,
+  "dependencies": ["application_credentials"],
+  "documentation": "https://github.com/thrivestorm2/ha-kroger-restock",
+  "integration_type": "service",
+  "iot_class": "cloud_polling",
+  "issue_tracker": "https://github.com/thrivestorm2/ha-kroger-restock/issues",
+  "requirements": [],
+  "version": "0.1.0"
+}

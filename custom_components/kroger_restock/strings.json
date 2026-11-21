@@ -1,0 +1,204 @@
+{
+  "application_credentials": {
+    "description": "Create an application at the [Kroger developer portal]({developer_url}) with the scopes `product.compact`, `cart.basic:write` and `profile.compact`, and set its redirect URI to `{redirect_uri}`. Then enter its client ID and client secret here."
+  },
+  "config": {
+    "step": {
+      "pick_implementation": {
+        "title": "[%key:common::config_flow::title::oauth2_pick_implementation%]"
+      },
+      "store": {
+        "title": "Find your store",
+        "description": "Enter a ZIP code to find nearby Kroger-family stores. Stock levels and aisles come from this store.",
+        "data": { "zip_code": "ZIP code" },
+        "data_description": { "zip_code": "Five-digit US ZIP code near your store." }
+      },
+      "pick_store": {
+        "title": "Choose your store",
+        "data": { "location_id": "Store" },
+        "data_description": { "location_id": "The store your cart orders from." }
+      },
+      "modality": {
+        "title": "Pickup or delivery",
+        "data": { "modality": "Order type" },
+        "data_description": { "modality": "How items pushed to your cart will be fulfilled." }
+      },
+      "reauth_confirm": {
+        "title": "[%key:common::config_flow::title::reauth%]",
+        "description": "Your Kroger sign-in has expired. Sign in again to keep syncing your list."
+      }
+    },
+    "error": {
+      "invalid_zip": "Enter a five-digit ZIP code.",
+      "no_stores": "No stores found near that ZIP code.",
+      "cannot_connect": "[%key:common::config_flow::error::cannot_connect%]"
+    },
+    "abort": {
+      "already_configured": "[%key:common::config_flow::abort::already_configured_account%]",
+      "already_in_progress": "[%key:common::config_flow::abort::already_in_progress%]",
+      "cannot_connect": "[%key:common::config_flow::error::cannot_connect%]",
+      "oauth_error": "[%key:common::config_flow::abort::oauth2_error%]",
+      "oauth_failed": "[%key:common::config_flow::abort::oauth2_failed%]",
+      "oauth_timeout": "[%key:common::config_flow::abort::oauth2_timeout%]",
+      "oauth_unauthorized": "[%key:common::config_flow::abort::oauth2_unauthorized%]",
+      "missing_configuration": "[%key:common::config_flow::abort::oauth2_missing_configuration%]",
+      "missing_credentials": "[%key:common::config_flow::abort::oauth2_missing_credentials%]",
+      "authorize_url_timeout": "[%key:common::config_flow::abort::oauth2_authorize_url_timeout%]",
+      "no_url_available": "[%key:common::config_flow::abort::oauth2_no_url_available%]",
+      "user_rejected_authorize": "[%key:common::config_flow::abort::oauth2_user_rejected_authorize%]",
+      "reauth_successful": "[%key:common::config_flow::abort::reauth_successful%]",
+      "wrong_account": "You signed in with a different Kroger account. Sign in with the account this entry was set up with."
+    },
+    "create_entry": {
+      "default": "[%key:common::config_flow::create_entry::authenticated%]"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Kroger Restock options",
+        "menu_options": {
+          "settings": "Settings",
+          "store": "Change store"
+        }
+      },
+      "settings": {
+        "title": "Settings",
+        "data": {
+          "modality": "Order type",
+          "order_days": "Order days",
+          "lead_time_days": "Lead time",
+          "stock_check_hours": "Stock check interval",
+          "give_up_days": "Give-up after",
+          "debounce_seconds": "Scan debounce",
+          "notify_targets": "Notification targets"
+        },
+        "data_description": {
+          "modality": "How items pushed to your cart will be fulfilled.",
+          "order_days": "Days you place your order. Leave empty to push back-in-stock items right away.",
+          "lead_time_days": "How many days before an order day held items are pushed.",
+          "stock_check_hours": "How often waiting items are checked for stock.",
+          "give_up_days": "Flag an item for review after it has been waiting this many days. Items are never removed automatically.",
+          "debounce_seconds": "Ignore repeat scans of the same code within this many seconds.",
+          "notify_targets": "Mobile app notify actions to alert when items come back in stock."
+        }
+      },
+      "store": {
+        "title": "[%key:component::kroger_restock::config::step::store::title%]",
+        "description": "[%key:component::kroger_restock::config::step::store::description%]",
+        "data": { "zip_code": "[%key:component::kroger_restock::config::step::store::data::zip_code%]" },
+        "data_description": { "zip_code": "[%key:component::kroger_restock::config::step::store::data_description::zip_code%]" }
+      },
+      "pick_store": {
+        "title": "[%key:component::kroger_restock::config::step::pick_store::title%]",
+        "data": { "location_id": "[%key:component::kroger_restock::config::step::pick_store::data::location_id%]" },
+        "data_description": { "location_id": "[%key:component::kroger_restock::config::step::pick_store::data_description::location_id%]" }
+      }
+    },
+    "error": {
+      "invalid_zip": "[%key:component::kroger_restock::config::error::invalid_zip%]",
+      "no_stores": "[%key:component::kroger_restock::config::error::no_stores%]",
+      "cannot_connect": "[%key:common::config_flow::error::cannot_connect%]"
+    }
+  },
+  "selector": {
+    "modality": {
+      "options": {
+        "PICKUP": "Pickup",
+        "DELIVERY": "Delivery"
+      }
+    },
+    "order_days": {
+      "options": {
+        "mon": "Monday",
+        "tue": "Tuesday",
+        "wed": "Wednesday",
+        "thu": "Thursday",
+        "fri": "Friday",
+        "sat": "Saturday",
+        "sun": "Sunday"
+      }
+    },
+    "source": {
+      "options": {
+        "scan": "Scan",
+        "shortcut": "iPhone Shortcut",
+        "esphome": "ESPHome scanner",
+        "manual": "Manual",
+        "assist": "Assist"
+      }
+    }
+  },
+  "entity": {
+    "todo": {
+      "grocery_list": { "name": "Grocery list" }
+    },
+    "sensor": {
+      "in_cart": { "name": "In cart", "unit_of_measurement": "items" },
+      "waiting": { "name": "Waiting on stock", "unit_of_measurement": "items" },
+      "needs_review": { "name": "Needs review", "unit_of_measurement": "items" },
+      "unmatched": { "name": "Unmatched", "unit_of_measurement": "items" },
+      "last_stock_check": { "name": "Last stock check" }
+    },
+    "button": {
+      "sync": { "name": "Sync now" }
+    }
+  },
+  "exceptions": {
+    "item_not_found": { "message": "No list item with ID {item_id}." },
+    "invalid_barcode": { "message": "\"{code}\" is not a barcode." },
+    "invalid_product_id": { "message": "\"{product_id}\" is not a valid product ID or UPC." },
+    "product_not_found": { "message": "Product {product_id} was not found at your store." },
+    "not_resolvable": { "message": "Only unmatched or needs-review items can be resolved (this item is {status})." },
+    "empty_name": { "message": "Enter an item name." },
+    "auth_failed": { "message": "Kroger sign-in expired. Re-authenticate the integration." },
+    "api_error": { "message": "Kroger API error: {error}" },
+    "entry_not_found": { "message": "No Kroger Restock entry with ID {entry_id}." },
+    "not_loaded": { "message": "Kroger Restock is not loaded." },
+    "multiple_entries": { "message": "More than one Kroger Restock entry is loaded; choose one with config_entry_id." }
+  },
+  "issues": {
+    "auth_expired": {
+      "title": "Kroger sign-in expired",
+      "description": "Kroger stopped accepting the saved sign-in for {title}. Open Settings → Devices & services and re-authenticate Kroger Restock. Scans are still added to the list but cannot reach your cart until you do."
+    }
+  },
+  "services": {
+    "scan_upc": {
+      "name": "Scan barcode",
+      "description": "Adds a scanned barcode to the list. In-stock products are pushed to the Kroger cart; out-of-stock products wait on the list; unknown codes are added as unmatched.",
+      "fields": {
+        "upc": { "name": "Barcode", "description": "The scanned UPC-A, UPC-E, EAN-13 or produce PLU code." },
+        "quantity": { "name": "Quantity", "description": "How many to add." },
+        "source": { "name": "Source", "description": "Where the scan came from." },
+        "config_entry_id": { "name": "Config entry", "description": "The Kroger Restock entry to use. Only needed if you have more than one." }
+      }
+    },
+    "add_item": {
+      "name": "Add item",
+      "description": "Adds an item by name. Searches the store's catalog; a single clear match is handled like a scan, otherwise the item is flagged for review.",
+      "fields": {
+        "name": { "name": "Name", "description": "What to add, e.g. \"Greek yogurt\"." },
+        "quantity": { "name": "[%key:component::kroger_restock::services::scan_upc::fields::quantity::name%]", "description": "[%key:component::kroger_restock::services::scan_upc::fields::quantity::description%]" },
+        "source": { "name": "[%key:component::kroger_restock::services::scan_upc::fields::source::name%]", "description": "Where the item came from." },
+        "config_entry_id": { "name": "[%key:component::kroger_restock::services::scan_upc::fields::config_entry_id::name%]", "description": "[%key:component::kroger_restock::services::scan_upc::fields::config_entry_id::description%]" }
+      }
+    },
+    "resolve_item": {
+      "name": "Resolve item",
+      "description": "Fixes an unmatched or needs-review item by attaching a Kroger product. The barcode is remembered for future scans.",
+      "fields": {
+        "item_id": { "name": "Item ID", "description": "The list item's ID (from the scan response or the item's attributes)." },
+        "product_id": { "name": "Product ID", "description": "The 13-digit Kroger product ID, or the product's UPC." },
+        "config_entry_id": { "name": "[%key:component::kroger_restock::services::scan_upc::fields::config_entry_id::name%]", "description": "[%key:component::kroger_restock::services::scan_upc::fields::config_entry_id::description%]" }
+      }
+    },
+    "sync": {
+      "name": "Sync cart",
+      "description": "Pushes any in-cart items whose cart push is still pending. Units already pushed are never sent again.",
+      "fields": {
+        "config_entry_id": { "name": "[%key:component::kroger_restock::services::scan_upc::fields::config_entry_id::name%]", "description": "[%key:component::kroger_restock::services::scan_upc::fields::config_entry_id::description%]" }
+      }
+    }
+  }
+}

@@ -1,0 +1,57 @@
+# serializer version: 1
+# name: test_diagnostics
+  dict({
+    'api': dict({
+      'calls_today': dict({
+      }),
+      'products_use_app_token': False,
+    }),
+    'barcode_cache_size': 1,
+    'counts': dict({
+      'held': 0,
+      'in_cart': 1,
+      'needs_review': 0,
+      'received': 0,
+      'unmatched': 0,
+      'waiting': 0,
+    }),
+    'entry': dict({
+      'data': dict({
+        'auth_implementation': 'kroger_restock',
+        'location_id': '01400943',
+        'location_name': '**REDACTED**',
+        'modality': 'PICKUP',
+        'token': '**REDACTED**',
+      }),
+      'options': dict({
+        'debounce_seconds': 3.0,
+      }),
+      'title': '**REDACTED**',
+      'unique_id': '**REDACTED**',
+    }),
+    'items': list([
+      dict({
+        'aisle_description': 'DAIRY',
+        'aisle_number': '12',
+        'brand': 'Kroger',
+        'candidates': list([
+        ]),
+        'image_url': '**REDACTED**',
+        'name': 'Coke',
+        'note': None,
+        'out_of_stock_since': None,
+        'price': 3.49,
+        'product_id': '0004900002891',
+        'pushed_quantity': 1,
+        'quantity': 1,
+        'raw_code': '049000028911',
+        'received_at': None,
+        'size': '1 gal',
+        'source': 'scan',
+        'status': 'in_cart',
+        'stock_level': 'HIGH',
+        'upc': '0004900002891',
+      }),
+    ]),
+  })
+# ---

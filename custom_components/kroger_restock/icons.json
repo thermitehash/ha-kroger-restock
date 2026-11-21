@@ -1,0 +1,23 @@
+{
+  "entity": {
+    "todo": {
+      "grocery_list": { "default": "mdi:cart-variant" }
+    },
+    "sensor": {
+      "in_cart": { "default": "mdi:cart-check" },
+      "waiting": { "default": "mdi:timer-sand" },
+      "needs_review": { "default": "mdi:help-circle-outline" },
+      "unmatched": { "default": "mdi:barcode-off" },
+      "last_stock_check": { "default": "mdi:store-clock" }
+    },
+    "button": {
+      "sync": { "default": "mdi:cart-arrow-up" }
+    }
+  },
+  "services": {
+    "scan_upc": { "service": "mdi:barcode-scan" },
+    "add_item": { "service": "mdi:playlist-plus" },
+    "resolve_item": { "service": "mdi:check-decagram" },
+    "sync": { "service": "mdi:cart-arrow-up" }
+  }
+}

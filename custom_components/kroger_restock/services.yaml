@@ -1,0 +1,82 @@
+scan_upc:
+  fields:
+    upc:
+      required: true
+      example: "049000028911"
+      selector:
+        text:
+    quantity:
+      default: 1
+      selector:
+        number:
+          min: 1
+          max: 99
+          mode: box
+    source:
+      default: scan
+      selector:
+        select:
+          translation_key: source
+          options:
+            - scan
+            - shortcut
+            - esphome
+            - manual
+            - assist
+    config_entry_id:
+      selector:
+        config_entry:
+          integration: kroger_restock
+
+add_item:
+  fields:
+    name:
+      required: true
+      example: "Greek yogurt"
+      selector:
+        text:
+    quantity:
+      default: 1
+      selector:
+        number:
+          min: 1
+          max: 99
+          mode: box
+    source:
+      default: manual
+      selector:
+        select:
+          translation_key: source
+          options:
+            - scan
+            - shortcut
+            - esphome
+            - manual
+            - assist
+    config_entry_id:
+      selector:
+        config_entry:
+          integration: kroger_restock
+
+resolve_item:
+  fields:
+    item_id:
+      required: true
+      selector:
+        text:
+    product_id:
+      required: true
+      example: "0004900002891"
+      selector:
+        text:
+    config_entry_id:
+      selector:
+        config_entry:
+          integration: kroger_restock
+
+sync:
+  fields:
+    config_entry_id:
+      selector:
+        config_entry:
+          integration: kroger_restock
