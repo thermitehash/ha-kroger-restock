@@ -12,7 +12,7 @@ from typing import Any
 
 from aiohttp import ClientError, ClientResponse, ClientSession, ClientTimeout
 
-from .const import API_BASE_URL, MODALITY_PICKUP, SEARCH_LIMIT, StockLevel
+from .const import API_BASE_URL, SEARCH_LIMIT, StockLevel
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -170,11 +170,15 @@ class CartItem:
 
     upc: str
     quantity: int = 1
-    modality: str = MODALITY_PICKUP
+    modality: str = "PICKUP"
 
     def as_dict(self) -> dict[str, Any]:
         """Return the API representation."""
-        return {"upc": self.upc, "quantity": self.quantity, "modality": self.modality}
+        return {
+            "upc": self.upc,
+            "quantity": self.quantity,
+            "modality": self.modality.upper(),
+        }
 
 
 def _as_float(value: Any) -> float | None:

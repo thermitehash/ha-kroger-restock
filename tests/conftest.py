@@ -67,7 +67,7 @@ def config_entry(hass: HomeAssistant) -> MockConfigEntry:
             "token": token_data(),
             CONF_LOCATION_ID: LOCATION_ID,
             CONF_LOCATION_NAME: "Kroger Test Store — 1 Main St, Cincinnati, OH",
-            CONF_MODALITY: "PICKUP",
+            CONF_MODALITY: "pickup",
         },
         options={"debounce_seconds": 3.0},
     )

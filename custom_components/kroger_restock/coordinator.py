@@ -182,8 +182,10 @@ class KrogerRestockCoordinator(DataUpdateCoordinator[RestockData]):
 
     @property
     def modality(self) -> str:
-        """PICKUP or DELIVERY."""
-        return str(entry_option(self.config_entry, CONF_MODALITY, DEFAULT_MODALITY))
+        """PICKUP or DELIVERY, as the cart API expects."""
+        return str(
+            entry_option(self.config_entry, CONF_MODALITY, DEFAULT_MODALITY)
+        ).upper()
 
     @property
     def debounce_seconds(self) -> float:

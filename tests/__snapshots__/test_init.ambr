@@ -20,7 +20,7 @@
         'auth_implementation': 'kroger_restock',
         'location_id': '01400943',
         'location_name': '**REDACTED**',
-        'modality': 'PICKUP',
+        'modality': 'pickup',
         'token': '**REDACTED**',
       }),
       'options': dict({

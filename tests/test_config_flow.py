@@ -113,7 +113,7 @@ async def test_full_flow(
         "custom_components.kroger_restock.async_setup_entry", return_value=True
     ) as mock_setup:
         result = await hass.config_entries.flow.async_configure(
-            result["flow_id"], {"modality": "DELIVERY"}
+            result["flow_id"], {"modality": "delivery"}
         )
         await hass.async_block_till_done()
 
@@ -122,7 +122,7 @@ async def test_full_flow(
     entry = result["result"]
     assert entry.unique_id == "profile-123"
     assert entry.data["location_id"] == LOCATION_ID
-    assert entry.data["modality"] == "DELIVERY"
+    assert entry.data["modality"] == "delivery"
     assert entry.data["token"]["access_token"] == "mock-access-token"
     assert len(mock_setup.mock_calls) == 1
 
@@ -234,7 +234,7 @@ async def test_options_settings(
     result = await hass.config_entries.options.async_configure(
         result["flow_id"],
         {
-            "modality": "DELIVERY",
+            "modality": "delivery",
             "order_days": ["sat"],
             "lead_time_days": 1,
             "stock_check_hours": 6,
@@ -245,7 +245,7 @@ async def test_options_settings(
     )
     assert result["type"] is FlowResultType.CREATE_ENTRY
     await hass.async_block_till_done()
-    assert setup_integration.options["modality"] == "DELIVERY"
+    assert setup_integration.options["modality"] == "delivery"
     assert setup_integration.options["give_up_days"] == 14
     coordinator = setup_integration.runtime_data.coordinator
     assert coordinator.modality == "DELIVERY"

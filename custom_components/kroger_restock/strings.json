@@ -104,8 +104,8 @@
   "selector": {
     "modality": {
       "options": {
-        "PICKUP": "Pickup",
-        "DELIVERY": "Delivery"
+        "pickup": "Pickup",
+        "delivery": "Delivery"
       }
     },
     "order_days": {

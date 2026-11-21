@@ -28,8 +28,9 @@ CONF_ORDER_DAYS: Final = "order_days"
 CONF_LEAD_TIME_DAYS: Final = "lead_time_days"
 CONF_NOTIFY_TARGETS: Final = "notify_targets"
 
-MODALITY_PICKUP: Final = "PICKUP"
-MODALITY_DELIVERY: Final = "DELIVERY"
+# Option values (lowercase for translations); the API wants them uppercased.
+MODALITY_PICKUP: Final = "pickup"
+MODALITY_DELIVERY: Final = "delivery"
 MODALITIES: Final = (MODALITY_PICKUP, MODALITY_DELIVERY)
 
 DEFAULT_MODALITY: Final = MODALITY_PICKUP
