@@ -478,11 +478,23 @@ async def test_resolve_errors(
         )
 
 
-async def test_invalid_barcode(
-    hass: HomeAssistant, setup_integration: MockConfigEntry
+@pytest.mark.parametrize(
+    "code",
+    ["https://id.gs1.org/01/00049000028911", "(01)00049000028911(17)271231", "abc"],
+)
+async def test_qr_and_other_codes_are_ignored(
+    hass: HomeAssistant,
+    setup_integration: MockConfigEntry,
+    fake_api: FakeKrogerApi,
+    code: str,
 ) -> None:
-    with pytest.raises(ServiceValidationError):
-        await scan(hass, "abc")
+    events = async_capture_events(hass, EVENT_SCANNED)
+    result = await scan(hass, code)
+    assert result == {"result": "ignored", "reason": "not_a_product_barcode"}
+    assert coordinator(setup_integration).items == []
+    assert fake_api.product_calls == []
+    await hass.async_block_till_done()
+    assert events == []
 
 
 # --- To-do entity ---------------------------------------------------------

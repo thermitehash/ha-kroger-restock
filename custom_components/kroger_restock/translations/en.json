@@ -232,9 +232,6 @@
     "item_not_found": {
       "message": "No list item with ID {item_id}."
     },
-    "invalid_barcode": {
-      "message": "\"{code}\" is not a barcode."
-    },
     "invalid_product_id": {
       "message": "\"{product_id}\" is not a valid product ID or UPC."
     },

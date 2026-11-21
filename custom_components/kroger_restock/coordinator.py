@@ -526,11 +526,11 @@ class KrogerRestockCoordinator(DataUpdateCoordinator[RestockData]):
         """Handle a scanned barcode."""
         normalized = normalize_barcode(code)
         if normalized.kind is BarcodeKind.INVALID:
-            raise ServiceValidationError(
-                translation_domain=DOMAIN,
-                translation_key="invalid_barcode",
-                translation_placeholders={"code": str(code)},
-            )
+            # QR code, Data Matrix, URL or other non-product code: ignore it
+            # quietly (no item, no event) so a scanner doesn't beep an error
+            # every time it catches the QR code next to a UPC.
+            _LOGGER.debug("Ignoring non-product code %r", code)
+            return {"result": "ignored", "reason": "not_a_product_barcode"}
         digits = normalized.digits
         now = monotonic()
         last = self._recent_scans.get(digits)

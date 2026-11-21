@@ -104,8 +104,9 @@ def test_gtin_14() -> None:
 
 
 def test_strips_scanner_noise() -> None:
-    """Whitespace, CR/LF and symbology prefixes are ignored."""
+    """Whitespace, CR/LF, hyphens and AIM symbology prefixes are allowed."""
     assert normalize_barcode(" 0490-0002-8911\r\n").digits == "049000028911"
+    assert normalize_barcode("]E0049000028911").digits == "049000028911"
 
 
 @pytest.mark.parametrize(
@@ -127,7 +128,22 @@ def test_plu(code: str, plu: str, organic: bool, name: str, term: str | None) ->
     assert plu_search_term(result) == term
 
 
-@pytest.mark.parametrize("code", ["", "abc", "1", "12345678901234567"])
+@pytest.mark.parametrize(
+    "code",
+    [
+        "",
+        "abc",
+        "1",
+        "12345678901234567",
+        # QR codes and other non-product codes found on packaging
+        "https://id.gs1.org/01/00049000028911/10/ABC123",
+        "https://example.com/recycle?p=049000028911",
+        "WIFI:S:guest;T:WPA;P:12345678;;",
+        "(01)00049000028911(17)271231(10)LOT42",
+        "0100049000028911\x1d17271231",
+        "049000028911/2",
+    ],
+)
 def test_invalid(code: str) -> None:
     """Junk is rejected."""
     assert normalize_barcode(code).kind is BarcodeKind.INVALID

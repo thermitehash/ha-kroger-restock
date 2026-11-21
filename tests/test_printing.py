@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 import os
 from pathlib import Path
+import re
 import struct
 from typing import Any
 from unittest.mock import patch
@@ -254,6 +255,26 @@ def test_pdf_golden() -> None:
     ):
         assert text in data
     check_golden("grocery_list.pdf", data)
+
+
+def _text_x_positions(data: bytes) -> list[float]:
+    """X positions (pt) of text drawn in an uncompressed PDF."""
+    return [float(m.group(1)) for m in re.finditer(rb"BT ([\d.]+) [\d.]+ Td", data)]
+
+
+def test_pdf_two_columns() -> None:
+    items = [
+        item(f"Item {n:03d}", ItemStatus.IN_CART, aisle_number=str(n // 10))
+        for n in range(90)
+    ]
+    data = render_pdf(build_document(items, "Store", PRINTED_AT), compress=False)
+    xs = _text_x_positions(data)
+    middle = 612 / 2
+    assert any(x < middle for x in xs)
+    assert any(x > middle for x in xs), "nothing was placed in the right column"
+    # A section that breaks across columns repeats its heading.
+    # (PDF strings escape parentheses.)
+    assert rb"\(cont.\)" in data
 
 
 def test_pdf_many_items_paginates() -> None:

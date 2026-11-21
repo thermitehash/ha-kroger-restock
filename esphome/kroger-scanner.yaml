@@ -85,12 +85,21 @@ uart:
       delimiter: "\r"
     sequence:
       - lambda: |-
+          // Keep plain numeric codes (UPC, EAN, PLU). Packaging also carries
+          // QR and Data Matrix codes (URLs, text, GS1 data); those contain
+          // other characters and are ignored silently.
           std::string code;
           for (uint8_t b : bytes) {
-            if (b >= '0' && b <= '9') code += static_cast<char>(b);
+            if (b >= '0' && b <= '9') {
+              code += static_cast<char>(b);
+            } else if (b == '\r' || b == '\n' || b == ' ' || b == '-') {
+              continue;
+            } else {
+              ESP_LOGD("scanner", "Ignoring non-product code");
+              return;
+            }
           }
-          // Ignore stray LF/CR-only lines and anything too short to be a
-          // UPC/EAN or PLU.
+          // Ignore empty lines and anything too short to be a UPC/EAN or PLU.
           if (code.size() >= 4) {
             id(last_barcode).publish_state(code);
             id(send_scan).execute(code);

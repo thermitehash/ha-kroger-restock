@@ -145,6 +145,14 @@ order, and stops at the first hit:
 Successful matches are remembered, and so is any fix you make with
 `resolve_item`, so the next scan of that code goes straight through.
 
+**QR codes and other codes are ignored.** Packaging often has a QR code
+(recycling info, recipes, GS1 Digital Link) or a Data Matrix code next to the
+UPC. Only plain numeric codes are looked up; anything containing letters,
+slashes, parentheses or control characters is ignored without adding an item
+or firing an event. `scan_upc` returns `{result: ignored, reason:
+not_a_product_barcode}` so a Shortcut can say so. The ESPHome scanner drops
+these codes on the device and stays silent.
+
 ## Entities
 
 | Entity | Description |
@@ -203,6 +211,7 @@ pushed: true           # false if the cart push failed (it is retried on sync)
 ```
 
 A scan ignored by the debounce returns `{result: duplicate, debounced: true}`.
+A QR code or other non-product code returns `{result: ignored}`.
 
 ### `kroger_restock.add_item`
 
@@ -291,7 +300,10 @@ jobs on port 9100 works; no driver is needed. The integration sends plain
 ESC/POS: initialize, bold headers, word-wrapped lines and a paper cut. Choose
 58 mm (32 columns) or 80 mm (48 columns) paper.
 
-**Letter-size PDF.** Every PDF is saved to `/media/kroger_restock/` (turn this
+**Letter-size PDF.** The PDF is laid out in two columns (the receipt is one
+column). Sections flow down the left column, then the right, and the last page
+is balanced so a short list uses both columns. A section that breaks across a
+column repeats its heading with "(cont.)". Every PDF is saved to `/media/kroger_restock/` (turn this
 off in options), so you can open it from **Media → My media**. If you enter an
 IPP printer URL (for example `ipp://printer.local/ipp/print`, or `ipps://…`),
 the PDF is also sent as an IPP Print-Job. Most network printers made in the

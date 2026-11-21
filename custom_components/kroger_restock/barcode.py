@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import StrEnum
+import re
 
 PRODUCT_ID_LENGTH = 13
 
@@ -97,6 +98,31 @@ def _dedupe(values: list[str]) -> tuple[str, ...]:
     return tuple(seen)
 
 
+# AIM symbology identifier some scanners prepend, e.g. "]E0" (EAN/UPC).
+_AIM_PREFIX = re.compile(r"^\][A-Za-z][0-9A-Za-z]")
+# Characters a human or scanner may put between digit groups.
+_SEPARATORS = frozenset(" -\t\r\n")
+
+
+def _product_digits(raw: str) -> str | None:
+    """Return the digits of a plain numeric code, or None for anything else.
+
+    Packaging often carries QR codes (URLs, GS1 Digital Link, marketing
+    links) and Data Matrix codes next to the UPC. Those contain letters,
+    slashes, parentheses or control characters, so they're rejected here
+    instead of having their digits mashed into a fake product code.
+    """
+    text = _AIM_PREFIX.sub("", raw.strip())
+    if not text or any(not ch.isdigit() and ch not in _SEPARATORS for ch in text):
+        return None
+    return "".join(ch for ch in text if ch.isdigit())
+
+
+def is_product_barcode(raw: str) -> bool:
+    """Return True if ``raw`` looks like a UPC/EAN/PLU we should look up."""
+    return normalize_barcode(raw).kind is not BarcodeKind.INVALID
+
+
 def normalize_barcode(raw: str) -> NormalizedBarcode:
     """Normalize a scanned code into ordered Kroger product ID candidates.
 
@@ -107,7 +133,11 @@ def normalize_barcode(raw: str) -> NormalizedBarcode:
       4. Fallback: the full code, left-pad to 13.
       5. PLU (4-5 digits): no candidates; caller does a name search.
     """
-    digits = "".join(ch for ch in str(raw) if ch.isdigit())
+    digits = _product_digits(str(raw))
+    if digits is None:
+        # QR codes, Data Matrix, URLs, GS1 element strings and other text:
+        # not a retail product barcode, so ignore it.
+        return NormalizedBarcode(raw=raw, digits="", kind=BarcodeKind.INVALID)
     length = len(digits)
 
     if length < 4:
