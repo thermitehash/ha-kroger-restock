@@ -15,8 +15,6 @@ from pytest_homeassistant_custom_component.components.diagnostics import (
 )
 from pytest_homeassistant_custom_component.test_util.aiohttp import AiohttpClientMocker
 from pytest_homeassistant_custom_component.typing import ClientSessionGenerator
-from syrupy.assertion import SnapshotAssertion
-from syrupy.filters import props
 
 from custom_components.kroger_restock.api import KrogerAuthError
 from custom_components.kroger_restock.const import DOMAIN, OAUTH2_TOKEN
@@ -162,7 +160,6 @@ async def test_diagnostics(
     hass_client: ClientSessionGenerator,
     setup_integration: MockConfigEntry,
     fake_api: FakeKrogerApi,
-    snapshot: SnapshotAssertion,
 ) -> None:
     fake_api.add(make_product("0004900002891", "Coke"))
     await hass.services.async_call(
@@ -172,16 +169,30 @@ async def test_diagnostics(
         hass, hass_client, setup_integration
     )
     text = str(diagnostics)
-    assert "user-access-token" not in text
-    assert "user-refresh-token" not in text
-    assert "Main St" not in text
-    assert diagnostics == snapshot(
-        exclude=props(
-            "id",
-            "added_at",
-            "last_stock_check",
-            "cart_pushed_at",
-            "created_at",
-            "modified_at",
-        )
-    )
+    for secret in ("user-access-token", "user-refresh-token", "Main St", "profile-123"):
+        assert secret not in text
+    entry = diagnostics["entry"]
+    assert entry["title"] == entry["unique_id"] == "**REDACTED**"
+    assert entry["data"] == {
+        "auth_implementation": DOMAIN,
+        "location_id": "01400943",
+        "location_name": "**REDACTED**",
+        "modality": "pickup",
+        "token": "**REDACTED**",
+    }
+    assert entry["options"] == {"debounce_seconds": 3.0}
+    assert diagnostics["counts"] == {
+        "unmatched": 0,
+        "needs_review": 0,
+        "waiting": 0,
+        "held": 0,
+        "in_cart": 1,
+        "received": 0,
+    }
+    assert diagnostics["barcode_cache_size"] == 1
+    assert diagnostics["api"]["products_use_app_token"] is False
+    [item] = diagnostics["items"]
+    assert item["image_url"] == "**REDACTED**"
+    assert item["status"] == "in_cart"
+    assert item["pushed_quantity"] == 1
+    assert item["product_id"] == "0004900002891"
