@@ -130,6 +130,8 @@ class KrogerOrderSensor(KrogerRestockEntity, SensorEntity):
                     "order_number": order.order_number,
                     "window": order.window,
                     "modality": order.modality,
+                    "item_count": order.item_count,
+                    "total": order.total,
                     "updated": order.updated_at.isoformat(),
                     "placed": order.placed_at.isoformat() if order.placed_at else None,
                     "shorted_items": order.shorted,

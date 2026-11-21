@@ -35,6 +35,7 @@ CONF_SAVE_PDF: Final = "save_pdf"
 CONF_IMAP_ENTRY: Final = "imap_entry"
 CONF_READD_SHORTED: Final = "readd_shorted"
 CONF_NOTIFY_ORDERS: Final = "notify_orders"
+CONF_EXTRA_SENDER_DOMAINS: Final = "extra_sender_domains"
 DEFAULT_READD_SHORTED: Final = False
 DEFAULT_NOTIFY_ORDERS: Final = True
 

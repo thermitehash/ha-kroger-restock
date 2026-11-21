@@ -140,12 +140,14 @@
         "data": {
           "imap_entry": "IMAP account",
           "notify_orders": "Notify on order updates",
-          "readd_shorted": "Re-add shorted items automatically"
+          "readd_shorted": "Re-add shorted items automatically",
+          "extra_sender_domains": "Extra sender domains"
         },
         "data_description": {
           "imap_entry": "The IMAP integration entry for the mailbox Kroger emails. Leave empty to turn order tracking off.",
           "notify_orders": "Notify when an order is ready, out for delivery, cancelled, or missing items. Uses the notification targets from Settings.",
-          "readd_shorted": "When an email says items were out of stock or not picked, put the matching list items back and push them to the cart again. Off by default: matching uses product names and can be wrong."
+          "readd_shorted": "When an email says items were out of stock or not picked, put the matching list items back and push them to the cart again. Off by default: matching uses product names and can be wrong.",
+          "extra_sender_domains": "Only needed if your order emails come from a domain that isn't recognized. Comma separated, e.g. ralphsmail.com. Kroger's own emails (e.krogermail.com) are already recognized."
         }
       }
     },

@@ -297,7 +297,8 @@ Kroger sends instead, read through Home Assistant's built-in
    password. Tips:
    - **Search** decides which messages trigger. The default (`UnSeen
      UnDeleted`) works. To skip everything else, use for example
-     `UnDeleted FROM kroger.com` (or your banner's domain).
+     `UnDeleted FROM krogermail.com` (Kroger sends order emails from
+     `email@e.krogermail.com`).
    - You don't need to turn on "message text" in the IMAP options: Kroger
      Restock fetches the full message itself with `imap.fetch`.
 2. In **Kroger Restock → Configure → Order tracking**, pick that IMAP account.
@@ -312,9 +313,16 @@ Kroger sends instead, read through Home Assistant's built-in
      With it off, the notification lists what was missing and you uncheck
      those items yourself.
 
-Only mail from Kroger-family domains is read (kroger.com, ralphs.com,
-fredmeyer.com, kingsoopers.com, harristeeter.com and the other banners); other
-mail in the mailbox is ignored. Each email is processed once.
+Only mail from Kroger-family domains is read (krogermail.com, kroger.com,
+ralphs.com, fredmeyer.com, kingsoopers.com, harristeeter.com and the other
+banners); other mail in the mailbox is ignored. If your banner's emails come
+from a domain that isn't recognized, add it under **Extra sender domains**.
+Each email is processed once.
+
+Tested with real Kroger pickup emails: **Pickup Order Confirmed** (placed,
+with window, item count and total), **Your Order is Ready for Pickup**
+(ready), and **Here's Your Final Receipt** (completed; it has no order
+number, so it completes the order in progress).
 
 ### The order sensor
 
@@ -322,8 +330,9 @@ mail in the mailbox is ignored. Each email is processed once.
 `ready`, `out_for_delivery`, `completed`, `cancelled`, or `none`. A finished
 order stays visible for two days, then the sensor goes back to `none`.
 
-Attributes: `order_number`, `window` (pickup or delivery window, as written in
-the email), `modality`, `placed`, `updated`, `shorted_items`,
+Attributes: `order_number`, `window` (e.g. `Mar 4, 2027 4:00pm–5:00pm`, or
+`Today 4:00pm–5:00pm` from the ready email), `modality`, `item_count`, `total`
+(estimated, from the confirmation), `placed`, `updated`, `shorted_items`,
 `substitutions`, `last_email`, and `recent_orders` (the last five).
 
 ### Event: `kroger_restock_order_update`
@@ -336,7 +345,9 @@ email), `shorted_item_ids` (shorted names matched to list items),
 ### Limitations
 
 Parsing depends on the wording of Kroger's emails, which can change and
-differs a little between banners. An email that can't be classified is
+differs a little between banners. Delivery emails, substitution emails and
+out-of-stock emails haven't been checked against real samples yet; those
+rules are best guesses. An email that can't be classified is
 ignored, and the sensor keeps its last state. If your emails aren't
 recognized, please open an issue with a redacted copy (remove names,
 addresses, order numbers and payment details) so the rules can be updated.

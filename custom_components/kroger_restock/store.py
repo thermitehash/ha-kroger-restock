@@ -112,6 +112,8 @@ class KrogerOrder:
     substitutions: list[str] = field(default_factory=list)
     last_subject: str | None = None
     history: list[dict[str, str]] = field(default_factory=list)
+    item_count: int | None = None
+    total: float | None = None
 
     def as_dict(self) -> dict[str, Any]:
         """Serialize for storage."""

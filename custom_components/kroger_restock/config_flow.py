@@ -36,6 +36,7 @@ from .api import KrogerApiClient, KrogerError, Location
 from .application_credentials import KrogerOAuth2Implementation
 from .const import (
     CONF_DEBOUNCE_SECONDS,
+    CONF_EXTRA_SENDER_DOMAINS,
     CONF_GIVE_UP_DAYS,
     CONF_IMAP_ENTRY,
     CONF_IPP_URL,
@@ -476,6 +477,9 @@ class KrogerRestockOptionsFlow(OptionsFlow):
         if user_input is not None:
             data = {**self.config_entry.options, **user_input}
             data[CONF_IMAP_ENTRY] = user_input.get(CONF_IMAP_ENTRY) or ""
+            data[CONF_EXTRA_SENDER_DOMAINS] = (
+                user_input.get(CONF_EXTRA_SENDER_DOMAINS) or ""
+            ).strip()
             return self.async_create_entry(data=data)
         schema = vol.Schema(
             {
@@ -491,6 +495,12 @@ class KrogerRestockOptionsFlow(OptionsFlow):
                     CONF_READD_SHORTED,
                     default=self._get(CONF_READD_SHORTED, DEFAULT_READD_SHORTED),
                 ): BooleanSelector(),
+                vol.Optional(
+                    CONF_EXTRA_SENDER_DOMAINS,
+                    description={
+                        "suggested_value": self._get(CONF_EXTRA_SENDER_DOMAINS, "")
+                    },
+                ): TextSelector(),
             }
         )
         return self.async_show_form(step_id="orders", data_schema=schema)

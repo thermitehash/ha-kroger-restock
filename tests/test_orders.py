@@ -26,7 +26,18 @@ from custom_components.kroger_restock.const import (
 from custom_components.kroger_restock.store import RestockStore
 
 from .helpers import FakeKrogerApi, make_product
-from .test_order_email import CHANGES_TEXT, PLACED_TEXT, READY_HTML
+from .test_order_email import (
+    CHANGES_TEXT,
+    CONFIRMED_TEXT,
+    KROGER_SENDER,
+    ORDER_NUMBER,
+    READY_HTML,
+    RECEIPT_TEXT,
+    SHORTED_HTML,
+    SUBJECTS,
+)
+
+PLACED_TEXT = CONFIRMED_TEXT
 
 SENSOR = "sensor.kroger_test_store_kroger_order"
 
@@ -95,7 +106,7 @@ async def deliver(
     subject: str,
     text: str,
     *,
-    sender: str = "orders@email.kroger.com",
+    sender: str = KROGER_SENDER,
     uid: str | None = None,
     event_text: str | None = None,
 ) -> str:
@@ -129,34 +140,58 @@ async def test_order_lifecycle(
     assert hass.states.get(SENSOR).state == "none"
     events = async_capture_events(hass, EVENT_ORDER_UPDATE)
 
-    await deliver(hass, imap_entry, mailbox, "Thanks for your order!", PLACED_TEXT)
+    # Real Kroger sequence: confirmed -> ready -> final receipt.
+    await deliver(hass, imap_entry, mailbox, SUBJECTS["confirmed"], CONFIRMED_TEXT)
     state = hass.states.get(SENSOR)
     assert state.state == "placed"
-    assert state.attributes["order_number"] == "112233445566"
-    assert state.attributes["window"].endswith("3:00 PM - 4:00 PM")
+    assert state.attributes["order_number"] == ORDER_NUMBER
+    assert state.attributes["window"] == "Mar 4, 2027 4:00pm–5:00pm"
     assert state.attributes["modality"] == "pickup"
+    assert state.attributes["item_count"] == 12
+    assert state.attributes["total"] == 48.75
 
-    await deliver(
-        hass, imap_entry, mailbox, "Your order is ready for pickup!", READY_HTML
-    )
+    await deliver(hass, imap_entry, mailbox, SUBJECTS["ready"], READY_HTML)
     state = hass.states.get(SENSOR)
     assert state.state == "ready"
-    assert state.attributes["shorted_items"] == [
-        "Simple Truth Organic Large Brown Eggs 12 ct",
-        "Coca-Cola Classic Soda 12 pk",
-    ]
-    assert len(state.attributes["substitutions"]) == 1
+    assert state.attributes["window"] == "Today 4:00pm–5:00pm"
+    assert state.attributes["item_count"] == 12  # kept from the confirmation
 
-    await deliver(
-        hass, imap_entry, mailbox, "Thanks for picking up your order 112233445566", ""
-    )
+    # The receipt has no order number; it completes the active order.
+    await deliver(hass, imap_entry, mailbox, SUBJECTS["receipt"], RECEIPT_TEXT)
     assert hass.states.get(SENSOR).state == "completed"
     orders = tracking.runtime_data.coordinator.data.orders
     assert len(orders) == 1
     assert [h["status"] for h in orders[0].history] == ["placed", "ready", "completed"]
     assert [e.data["status"] for e in events] == ["placed", "ready", "completed"]
-    # Full text came from imap.fetch, not the truncated event text.
-    assert events[1].data["shorted"][0].startswith("Simple Truth")
+    assert events[0].data["previous_status"] == "none"
+
+
+async def test_receipt_without_known_order_is_ignored(
+    hass: HomeAssistant,
+    tracking: MockConfigEntry,
+    imap_entry: MockConfigEntry,
+    mailbox: dict[str, str],
+) -> None:
+    await deliver(hass, imap_entry, mailbox, SUBJECTS["receipt"], RECEIPT_TEXT)
+    assert hass.states.get(SENSOR).state == "none"
+    assert tracking.runtime_data.coordinator.data.orders == []
+
+
+async def test_full_text_comes_from_imap_fetch(
+    hass: HomeAssistant,
+    tracking: MockConfigEntry,
+    imap_entry: MockConfigEntry,
+    mailbox: dict[str, str],
+) -> None:
+    events = async_capture_events(hass, EVENT_ORDER_UPDATE)
+    # The event only carries the first 50 characters; shorted items are further down.
+    await deliver(
+        hass, imap_entry, mailbox, "Your order is ready for pickup!", SHORTED_HTML
+    )
+    assert events[0].data["shorted"][0].startswith("Simple Truth")
+    state = hass.states.get(SENSOR)
+    assert len(state.attributes["shorted_items"]) == 2
+    assert len(state.attributes["substitutions"]) == 1
 
 
 async def test_sensor_shows_none_after_finished_order_ages(
@@ -166,7 +201,8 @@ async def test_sensor_shows_none_after_finished_order_ages(
     mailbox: dict[str, str],
     freezer: FrozenDateTimeFactory,
 ) -> None:
-    await deliver(hass, imap_entry, mailbox, "Order 998877665 has been delivered", "")
+    await deliver(hass, imap_entry, mailbox, SUBJECTS["confirmed"], CONFIRMED_TEXT)
+    await deliver(hass, imap_entry, mailbox, SUBJECTS["receipt"], RECEIPT_TEXT)
     assert hass.states.get(SENSOR).state == "completed"
     freezer.tick(timedelta(days=3))
     tracking.runtime_data.coordinator.mark_changed()
@@ -243,7 +279,7 @@ async def test_falls_back_to_event_text_without_fetch(
     await deliver(
         hass, imap_entry, mailbox, "Order confirmation", "", event_text=PLACED_TEXT
     )
-    assert hass.states.get(SENSOR).attributes["order_number"] == "112233445566"
+    assert hass.states.get(SENSOR).attributes["order_number"] == ORDER_NUMBER
 
 
 async def setup_cart(hass: HomeAssistant, fake_api: FakeKrogerApi) -> dict[str, str]:
@@ -273,7 +309,7 @@ async def test_shorted_items_matched_and_notified(
         "custom_components.kroger_restock.coordinator.persistent_notification.async_create"
     ) as notify:
         await deliver(
-            hass, imap_entry, mailbox, "Your order is ready for pickup!", READY_HTML
+            hass, imap_entry, mailbox, "Your order is ready for pickup!", SHORTED_HTML
         )
     data = events[0].data
     assert data["shorted_item_ids"] == {
@@ -315,7 +351,7 @@ async def test_shorted_items_readded_when_enabled(
     fake_api.set_stock("0001111000101", "TEMPORARILY_OUT_OF_STOCK")
 
     await deliver(
-        hass, imap_entry, mailbox, "Your order is ready for pickup!", READY_HTML
+        hass, imap_entry, mailbox, "Your order is ready for pickup!", SHORTED_HTML
     )
     eggs = coordinator.get_item(ids["Simple Truth Organic Large Brown Eggs"])
     coke = coordinator.get_item(ids["Coca-Cola Classic Soda"])

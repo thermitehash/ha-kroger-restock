@@ -19,6 +19,7 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
 
 from .const import (
+    CONF_EXTRA_SENDER_DOMAINS,
     CONF_IMAP_ENTRY,
     CONF_NOTIFY_ORDERS,
     CONF_READD_SHORTED,
@@ -140,10 +141,18 @@ class OrderWatcher:
             self._unsub()
             self._unsub = None
 
+    @property
+    def extra_domains(self) -> tuple[str, ...]:
+        """Additional sender domains from the options (comma separated)."""
+        raw = entry_option(self.coordinator.config_entry, CONF_EXTRA_SENDER_DOMAINS, "")
+        return tuple(
+            d.strip().lstrip("@") for d in str(raw or "").split(",") if d.strip()
+        )
+
     @callback
     def _filter(self, event_data: dict[str, Any]) -> bool:
         return event_data.get("entry_id") == self.imap_entry_id and is_kroger_sender(
-            str(event_data.get("sender", ""))
+            str(event_data.get("sender", "")), self.extra_domains
         )
 
     async def _handle_event(self, event: Event) -> None:
@@ -219,7 +228,9 @@ class OrderWatcher:
         order = self._find_order(parsed.order_number, now)
         previous = str(order.status) if order is not None else str(OrderStatus.NONE)
         if order is None:
-            if parsed.status == UPDATE_ONLY and parsed.order_number is None:
+            # An email without an order number (e.g. Kroger's "final receipt")
+            # can only update an order we already know about.
+            if parsed.order_number is None and parsed.status != OrderStatus.PLACED:
                 coordinator.mark_changed()
                 return None
             order = KrogerOrder(
@@ -242,6 +253,8 @@ class OrderWatcher:
         order.updated_at = max(order.updated_at, now)
         order.window = parsed.window or order.window
         order.modality = parsed.modality or order.modality
+        order.item_count = parsed.item_count or order.item_count
+        order.total = parsed.total or order.total
         order.last_subject = subject[:200]
         new_shorted = [s for s in parsed.shorted if s not in order.shorted]
         order.shorted = [*order.shorted, *new_shorted]

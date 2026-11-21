@@ -18,10 +18,12 @@ from html.parser import HTMLParser
 import re
 
 # Sender domains of Kroger-family banners. Order emails come from these
-# domains or their subdomains (e.g. email.kroger.com).
+# domains or their subdomains. Kroger's own order emails come from
+# email@e.krogermail.com (seen Nov 2026). More can be added in the options.
 KROGER_FAMILY_DOMAINS: frozenset[str] = frozenset(
     {
         "kroger.com",
+        "krogermail.com",
         "bakersplus.com",
         "citymarket.com",
         "dillons.com",
@@ -83,7 +85,7 @@ _STATUS_RULES: tuple[tuple[str, re.Pattern[str]], ...] = (
         re.compile(
             r"\b(?:has been |was )?delivered\b|\bpicked up\b|"
             r"\bthanks? for (?:shopping|picking up)\b|\border (?:is )?complete\b|"
-            r"\byour (?:e-?)?receipt\b",
+            r"\byour (?:e-?)?receipt\b|\bfinal receipt\b",
             re.I,
         ),
     ),
@@ -128,7 +130,16 @@ _ORDER_NUMBER = re.compile(
     r"\border\s*(?:#|no\.?|number|num\.?)\s*:?\s*#?\s*([0-9][0-9A-Z-]{5,})", re.I
 )
 _TIME = r"\d{1,2}(?::\d{2})?\s*[ap]\.?\s?m\.?"
-_WINDOW = re.compile(rf"{_TIME}\s*(?:-|–|—|to)\s*{_TIME}", re.I)
+# "between 4:00pm and 5:00pm", "3:00 PM - 4:00 PM", "3 pm to 4 pm"
+_WINDOW = re.compile(rf"({_TIME})\s*(?:-|–|—|to|and)\s*({_TIME})", re.I)
+_MONTH = r"(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?"
+_WEEKDAY = r"(?:mon|tue|tues|wed|thu|thur|thurs|fri|sat|sun)[a-z]*\.?"
+_DATE = re.compile(
+    rf"\b(?:{_WEEKDAY}[\s,-]*)?{_MONTH}\s+\d{{1,2}}(?:,\s*\d{{4}})?\b|\btoday\b|\btomorrow\b",
+    re.I,
+)
+_ITEM_COUNT = re.compile(r"\bnumber of items\s*:?\s*(\d+)", re.I)
+_TOTAL = re.compile(r"(?<![a-z])total\*?\s*:?\s*\$\s?([\d,]+\.\d{2})", re.I)
 _MODALITY_DELIVERY = re.compile(r"\bdeliver", re.I)
 _MODALITY_PICKUP = re.compile(r"\bpick[ -]?up\b", re.I)
 
@@ -170,6 +181,8 @@ class OrderEmail:
     modality: str | None = None
     shorted: list[str] = field(default_factory=list)
     substitutions: list[str] = field(default_factory=list)
+    item_count: int | None = None
+    total: float | None = None
 
 
 class _TextExtractor(HTMLParser):
@@ -232,10 +245,40 @@ def email_to_lines(text: str) -> list[str]:
     return out
 
 
-def is_kroger_sender(sender: str) -> bool:
+def is_kroger_sender(sender: str, extra_domains: tuple[str, ...] = ()) -> bool:
     """Return True if ``sender`` is an address at a Kroger-family domain."""
     domain = sender.rpartition("@")[2].strip().lower().rstrip(">")
-    return any(domain == d or domain.endswith(f".{d}") for d in KROGER_FAMILY_DOMAINS)
+    if not domain:
+        return False
+    domains = KROGER_FAMILY_DOMAINS | {d.strip().lower() for d in extra_domains if d}
+    return any(domain == d or domain.endswith(f".{d}") for d in domains)
+
+
+def _norm_time(text: str) -> str:
+    return re.sub(r"[\s.]", "", text).lower()
+
+
+def _find_window(lines: list[str]) -> str | None:
+    """Return e.g. 'Mar 4, 2027 4:00pm–5:00pm' or 'Today 4:00pm–5:00pm'.
+
+    Kroger writes the window as "between 4:00pm and 5:00pm", sometimes with
+    the date on the same line and sometimes under a heading such as
+    "PICK UP TODAY BETWEEN:". A window with a date is preferred.
+    """
+    first: str | None = None
+    for index, line in enumerate(lines):
+        match = _WINDOW.search(line)
+        if not match:
+            continue
+        times = f"{_norm_time(match.group(1))}–{_norm_time(match.group(2))}"
+        for probe in (line, *reversed(lines[max(0, index - 2) : index])):
+            if date := _DATE.search(probe):
+                label = " ".join(date.group(0).replace(" - ", " ").split())
+                if label.isupper():  # "PICK UP TODAY BETWEEN:"
+                    label = label.title()
+                return f"{label[0].upper()}{label[1:]} {times}"
+        first = first or times
+    return first
 
 
 def _classify(subject: str, lines: list[str]) -> str | None:
@@ -302,11 +345,9 @@ def parse_order_email(subject: str, text: str) -> OrderEmail:
     if match := _ORDER_NUMBER.search(f"{subject}\n{body}"):
         order_number = match.group(1).strip("-").upper()
 
-    window = None
-    for line in lines:
-        if _WINDOW.search(line):
-            window = line[:100]
-            break
+    window = _find_window(lines)
+    item_count = int(m.group(1)) if (m := _ITEM_COUNT.search(body)) else None
+    total = float(m.group(1).replace(",", "")) if (m := _TOTAL.search(body)) else None
 
     modality = None
     probe = f"{subject}\n{' '.join(lines[:20])}"
@@ -322,4 +363,6 @@ def parse_order_email(subject: str, text: str) -> OrderEmail:
         modality=modality,
         shorted=_section(lines, _SHORTED_HEADER, clean=True),
         substitutions=_section(lines, _SUBSTITUTION_HEADER, clean=False),
+        item_count=item_count,
+        total=total,
     )
