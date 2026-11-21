@@ -14,10 +14,10 @@ on the list as **waiting**. Nothing leaves the list until you check it off.
 > developer API. It is not endorsed by, sponsored by or affiliated with The
 > Kroger Co.
 
-**Status:** Phase 1 (core) is done: sign-in, store selection, barcode and
-text lookup, the to-do list, cart push and the scan event. Stock re-checks,
-order-day holds, notifications, printing and the ESPHome scanner come in
-later phases. See [Roadmap](#roadmap).
+**Status:** Phases 1–2 are done: sign-in, store selection, barcode and text
+lookup, the to-do list, cart push, the scan event, stock re-checks, order-day
+holds, the give-up flag and notifications. Printing, examples and the ESPHome
+scanner come next. See [Roadmap](#roadmap).
 
 <!-- Screenshot placeholder: the to-do list card -->
 <!-- ![Grocery list](docs/screenshots/todo.png) -->
@@ -95,7 +95,7 @@ Home Assistant's list is the source of truth. Every item has a status:
 | --- | --- | --- |
 | `in_cart` | Found and in stock; pushed to your Kroger cart | Yes |
 | `waiting` | Found but temporarily out of stock | No |
-| `held` | Back in stock, waiting for the order-day window *(Phase 2)* | Not yet |
+| `held` | Back in stock, waiting for the order-day window | Not yet |
 | `needs_review` | A text or produce match needs you to pick the product | No |
 | `unmatched` | The barcode isn't in Kroger's catalog | No |
 | `received` | You checked it off | — |
@@ -111,10 +111,17 @@ Home Assistant's list is the source of truth. Every item has a status:
   candidates; fix it with `kroger_restock.resolve_item`.
 - **Produce stickers (PLU codes)** like `4011` are searched by name and always
   marked `needs_review`.
+- **Waiting items are re-checked** every few hours (3 h by default), with the
+  calls spread out. When one comes back in stock it's pushed right away, or,
+  if you've set order days, marked `held` and pushed in the window before your
+  order day. You get a notification either way.
+- **Give-up flag:** an item waiting longer than the give-up setting (30 days by
+  default) raises a Repairs issue where you choose **Keep waiting** (restarts
+  the clock) or **Remove from list**. Items are never removed automatically.
 - **Checking an item off** marks it `received`. That's the only way it leaves
   the active list.
-- **Unchecking a received item** ("they shorted me at pickup") checks stock
-  again and pushes it again.
+- **Unchecking a received item**, or calling `kroger_restock.readd_item`
+  ("they shorted me at pickup"), checks stock again and pushes it again.
 - **No double pushes.** The integration records how many units of each item it
   has pushed. Syncing only sends what hasn't been sent yet.
 - In the to-do list, each item reads `Name (size) ×qty`. The description shows
@@ -141,12 +148,14 @@ Successful matches are remembered, and so is any fix you make with
 | `todo.<store>` | The grocery list (create, edit, check off, delete, reorder) |
 | `sensor.<store>_in_cart` | Number of items pushed to the cart |
 | `sensor.<store>_waiting_on_stock` | Number of out-of-stock items |
+| `sensor.<store>_held_for_order_day` | Number of held items |
 | `sensor.<store>_needs_review` | Number of items to review |
 | `sensor.<store>_unmatched` | Number of unknown barcodes |
 | `sensor.<store>_last_stock_check` | When stock was last checked |
 | `button.<store>_sync_now` | Push any pending cart items |
+| `button.<store>_check_stock_now` | Re-check waiting items now |
 
-Print and stock-check buttons arrive in later phases.
+Print buttons arrive in Phase 3.
 
 ## Actions
 
@@ -207,6 +216,18 @@ Pushes any `in_cart` items whose push is still pending (for example after a
 network error). Returns `pushed`, `pending` and the items pushed. Units that
 were already pushed are never sent again.
 
+### `kroger_restock.readd_item`
+
+Puts an item back (`item_id`) and pushes it again after a stock check. Use it
+when an order was shorted. It's the only way an already-pushed item is pushed
+again, and it pushes the full quantity.
+
+### `kroger_restock.check_stock`
+
+Re-checks every waiting item now and pushes held items if you're inside the
+order window. Returns `checked`, `back_in_stock`, `pushed`, `held`,
+`still_waiting` and `held_pushed`.
+
 ## Events
 
 ### `kroger_restock_scanned`
@@ -236,6 +257,11 @@ actions:
       message: "{{ trigger.event.data.name }} is out of stock; it's on the list."
 ```
 
+### `kroger_restock_back_in_stock`
+
+Fired when a stock check finds waiting items back in stock. Data: `pushed` and
+`held` (lists of `{item_id, name}`) and `config_entry_id`.
+
 ## Options
 
 **Settings → Devices & services → Kroger Restock → Configure**:
@@ -243,9 +269,14 @@ actions:
 - **Change store** (by ZIP code)
 - **Order type:** Pickup or Delivery
 - **Scan debounce** (default 3 s)
-- **Order days**, **lead time**, **stock check interval** (default 3 h),
-  **give-up after** (default 30 days) and **notification targets** are saved
-  now and used from Phase 2.
+- **Order days** and **lead time** (default: none, 1 day). With order days
+  set, back-in-stock items are held and pushed from `lead time` days before an
+  order day through the order day. Example: order day Saturday, lead time 1 →
+  pushed on Friday or Saturday.
+- **Stock check interval** (default 3 h)
+- **Give-up after** (default 30 days)
+- **Notification targets:** `notify.mobile_app_*` actions. With none chosen,
+  you get a persistent notification in Home Assistant instead.
 
 ## Limitations
 
@@ -303,8 +334,8 @@ the real cart.
 1. ✅ **Core:** OAuth, store selection, API client, barcode normalization,
    storage, to-do list, `scan_upc` / `add_item` / `resolve_item` / `sync`,
    cart push, scan event, tests, CI
-2. Stock re-checks, `held` and order-day window, give-up flag, notifications,
-   `readd_item`, check-stock button
+2. ✅ Stock re-checks, `held` and order-day window, give-up flag,
+   notifications, `readd_item`, check-stock button
 3. Printing: ESC/POS receipt printer and letter-size PDF over IPP
 4. Blueprint, example automations, iOS Shortcut guide
 5. ESPHome wall scanner

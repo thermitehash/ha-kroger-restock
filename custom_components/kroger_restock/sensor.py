@@ -42,6 +42,7 @@ def _counter(status: ItemStatus) -> KrogerSensorDescription:
 SENSORS: tuple[KrogerSensorDescription, ...] = (
     _counter(ItemStatus.IN_CART),
     _counter(ItemStatus.WAITING),
+    _counter(ItemStatus.HELD),
     _counter(ItemStatus.NEEDS_REVIEW),
     _counter(ItemStatus.UNMATCHED),
     KrogerSensorDescription(

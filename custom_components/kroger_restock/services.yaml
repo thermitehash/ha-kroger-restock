@@ -80,3 +80,21 @@ sync:
       selector:
         config_entry:
           integration: kroger_restock
+
+readd_item:
+  fields:
+    item_id:
+      required: true
+      selector:
+        text:
+    config_entry_id:
+      selector:
+        config_entry:
+          integration: kroger_restock
+
+check_stock:
+  fields:
+    config_entry_id:
+      selector:
+        config_entry:
+          integration: kroger_restock

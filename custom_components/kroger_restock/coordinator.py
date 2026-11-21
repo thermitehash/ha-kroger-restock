@@ -5,20 +5,22 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 import logging
 import re
 import time
 from typing import TYPE_CHECKING, Any
 
+from homeassistant.components import persistent_notification
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
 from homeassistant.exceptions import (
     ConfigEntryAuthFailed,
     HomeAssistantError,
     ServiceValidationError,
 )
 from homeassistant.helpers import issue_registry as ir
+from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
 
@@ -38,12 +40,21 @@ from .barcode import (
 )
 from .const import (
     CONF_DEBOUNCE_SECONDS,
+    CONF_GIVE_UP_DAYS,
+    CONF_LEAD_TIME_DAYS,
     CONF_LOCATION_ID,
     CONF_LOCATION_NAME,
     CONF_MODALITY,
+    CONF_NOTIFY_TARGETS,
+    CONF_ORDER_DAYS,
+    CONF_STOCK_CHECK_HOURS,
     DEFAULT_DEBOUNCE_SECONDS,
+    DEFAULT_GIVE_UP_DAYS,
+    DEFAULT_LEAD_TIME_DAYS,
     DEFAULT_MODALITY,
+    DEFAULT_STOCK_CHECK_HOURS,
     DOMAIN,
+    EVENT_BACK_IN_STOCK,
     EVENT_SCANNED,
     MAX_REVIEW_CANDIDATES,
     MISS_CACHE_SECONDS,
@@ -52,6 +63,7 @@ from .const import (
     ItemStatus,
     ScanResult,
 )
+from .schedule import check_spacing, in_order_window, next_window_start, waited_too_long
 from .store import ListItem, RestockData, RestockStore
 
 if TYPE_CHECKING:
@@ -60,6 +72,8 @@ if TYPE_CHECKING:
 _LOGGER = logging.getLogger(__name__)
 
 ISSUE_AUTH_EXPIRED = "auth_expired"
+ISSUE_GAVE_UP = "gave_up"
+HELD_TICK = timedelta(hours=1)
 
 _QTY_SUFFIX = re.compile(r"\s*[×x]\s*(\d+)\s*$", re.IGNORECASE)
 _SIZE_SUFFIX = re.compile(r"\s*\([^()]*\)\s*$")
@@ -146,6 +160,9 @@ class KrogerRestockCoordinator(DataUpdateCoordinator[RestockData]):
         self._recent_scans: dict[str, float] = {}
         self._product_cache: dict[str, tuple[float, Product | None]] = {}
         self._miss_cache: dict[str, float] = {}
+        self._unsubs: list[CALLBACK_TYPE] = []
+        self._check_task: asyncio.Task[Any] | None = None
+        self._last_cycle: datetime | None = None
         self.data = RestockData()
 
     # ------------------------------------------------------------------
@@ -161,7 +178,52 @@ class KrogerRestockCoordinator(DataUpdateCoordinator[RestockData]):
 
     def _changed(self) -> None:
         self._store.async_delay_save(self.data)
+        self._clear_stale_give_up_issues()
         self.async_set_updated_data(self.data)
+
+    @callback
+    def async_start(self) -> None:
+        """Start the periodic stock check and the order-window tick."""
+        interval = timedelta(hours=self.stock_check_hours)
+        self._unsubs.append(
+            async_track_time_interval(
+                self.hass, self._scheduled_check, interval, name="kroger_restock stock"
+            )
+        )
+        self._unsubs.append(
+            async_track_time_interval(
+                self.hass, self._held_tick, HELD_TICK, name="kroger_restock held"
+            )
+        )
+
+    @callback
+    def async_stop(self) -> None:
+        """Cancel timers and any running check."""
+        for unsub in self._unsubs:
+            unsub()
+        self._unsubs.clear()
+        if self._check_task is not None and not self._check_task.done():
+            self._check_task.cancel()
+
+    @callback
+    def _scheduled_check(self, _now: datetime) -> None:
+        if self._check_task is not None and not self._check_task.done():
+            return
+        self._check_task = self.config_entry.async_create_background_task(
+            self.hass, self._safe_check(), "kroger_restock stock check"
+        )
+
+    async def _safe_check(self) -> None:
+        try:
+            await self.async_check_stock(spread=True)
+        except HomeAssistantError as err:
+            _LOGGER.warning("Scheduled stock check failed: %s", err)
+
+    async def _held_tick(self, _now: datetime) -> None:
+        try:
+            await self.async_push_held()
+        except HomeAssistantError as err:
+            _LOGGER.warning("Pushing held items failed: %s", err)
 
     async def async_flush(self) -> None:
         """Write state to disk now."""
@@ -186,6 +248,51 @@ class KrogerRestockCoordinator(DataUpdateCoordinator[RestockData]):
         return str(
             entry_option(self.config_entry, CONF_MODALITY, DEFAULT_MODALITY)
         ).upper()
+
+    @property
+    def stock_check_hours(self) -> float:
+        """Hours between stock checks of waiting items."""
+        return float(
+            entry_option(
+                self.config_entry, CONF_STOCK_CHECK_HOURS, DEFAULT_STOCK_CHECK_HOURS
+            )
+        )
+
+    @property
+    def give_up_days(self) -> int:
+        """Flag items that have waited longer than this."""
+        return int(
+            entry_option(self.config_entry, CONF_GIVE_UP_DAYS, DEFAULT_GIVE_UP_DAYS)
+        )
+
+    @property
+    def order_days(self) -> list[str]:
+        """Weekday keys the user orders on (empty = push right away)."""
+        return list(entry_option(self.config_entry, CONF_ORDER_DAYS, []) or [])
+
+    @property
+    def lead_time_days(self) -> int:
+        """Days before an order day that held items get pushed."""
+        return int(
+            entry_option(self.config_entry, CONF_LEAD_TIME_DAYS, DEFAULT_LEAD_TIME_DAYS)
+        )
+
+    @property
+    def notify_targets(self) -> list[str]:
+        """notify.* actions to call."""
+        return list(entry_option(self.config_entry, CONF_NOTIFY_TARGETS, []) or [])
+
+    def in_order_window(self) -> bool:
+        """Return True if held items should be pushed now."""
+        return in_order_window(
+            dt_util.now().date(), self.order_days, self.lead_time_days
+        )
+
+    def next_push_date(self) -> Any:
+        """Return the date held items will next be pushed, or None."""
+        return next_window_start(
+            dt_util.now().date(), self.order_days, self.lead_time_days
+        )
 
     @property
     def debounce_seconds(self) -> float:
@@ -635,6 +742,7 @@ class KrogerRestockCoordinator(DataUpdateCoordinator[RestockData]):
         async with self._lock:
             item = self.get_item(item_id)
             item.received_at = None
+            item.give_up_snoozed_at = None
             item.pushed_quantity = 0
             item.cart_pushed_at = None
             if item.product_id is None:
@@ -684,6 +792,228 @@ class KrogerRestockCoordinator(DataUpdateCoordinator[RestockData]):
             self.data.items = [i for i in self.data.items if i.id not in ids]
             self._changed()
 
+    # ------------------------------------------------------------------
+    # Phase 2: stock checks, held items, give-up, notifications
+
+    async def async_check_stock(self, *, spread: bool = False) -> dict[str, Any]:
+        """Re-check every waiting item and act on the ones back in stock.
+
+        With ``spread`` the calls are spaced out over part of the interval
+        to stay gentle on Kroger's rate limits. The lock is only held while
+        applying each result, so scans keep working during a long cycle.
+        """
+        waiting_ids = [i.id for i in self.data.items if i.status == ItemStatus.WAITING]
+        spacing = (
+            check_spacing(self.stock_check_hours * 3600, len(waiting_ids))
+            if spread
+            else 0.0
+        )
+        back: list[ListItem] = []
+        pushed: list[ListItem] = []
+        held: list[ListItem] = []
+        errors: list[str] = []
+        for index, item_id in enumerate(waiting_ids):
+            if index and spacing:
+                await asyncio.sleep(spacing)
+            item = self._item_or_none(item_id)
+            if item is None or item.status != ItemStatus.WAITING or not item.product_id:
+                continue
+            self._product_cache.pop(item.product_id, None)
+            try:
+                product = await self._get_product(item.product_id)
+            except HomeAssistantError as err:
+                errors.append(str(err))
+                continue
+            async with self._lock:
+                if item.status != ItemStatus.WAITING:
+                    continue
+                item.last_stock_check = dt_util.utcnow()
+                if product is None or not product.in_stock:
+                    if product is not None:
+                        item.stock_level = product.stock_level
+                    continue
+                self._apply_product(item, product)
+                back.append(item)
+                if self.order_days and not self.in_order_window():
+                    item.status = ItemStatus.HELD
+                    item.out_of_stock_since = None
+                    held.append(item)
+                else:
+                    item.status = ItemStatus.IN_CART
+                    item.out_of_stock_since = None
+                    pushed.append(item)
+        async with self._lock:
+            push_error = await self._push(pushed)
+            for item in pushed:
+                if item.status == ItemStatus.IN_CART:
+                    item.out_of_stock_since = None
+            self._last_cycle = dt_util.utcnow()
+            self._flag_give_ups()
+            self._changed()
+        if back:
+            self._announce_back_in_stock(pushed, held)
+        result: dict[str, Any] = {
+            "checked": len(waiting_ids),
+            "back_in_stock": len(back),
+            "pushed": [{"item_id": i.id, "name": i.name} for i in pushed],
+            "held": [{"item_id": i.id, "name": i.name} for i in held],
+            "still_waiting": self.count(ItemStatus.WAITING),
+        }
+        if push_error:
+            errors.append(push_error)
+        if errors:
+            result["errors"] = errors
+        return result
+
+    async def async_push_held(self) -> dict[str, Any]:
+        """Push held items if we're inside the order window.
+
+        Stock is checked again first; anything out of stock again goes back
+        to waiting.
+        """
+        held_ids = [i.id for i in self.data.items if i.status == ItemStatus.HELD]
+        if not held_ids or (self.order_days and not self.in_order_window()):
+            return {"pushed": 0}
+        to_push: list[ListItem] = []
+        async with self._lock:
+            for item_id in held_ids:
+                item = self._item_or_none(item_id)
+                if (
+                    item is None
+                    or item.status != ItemStatus.HELD
+                    or not item.product_id
+                ):
+                    continue
+                self._product_cache.pop(item.product_id, None)
+                product = await self._get_product(item.product_id)
+                item.last_stock_check = dt_util.utcnow()
+                if product is None or not product.in_stock:
+                    item.status = ItemStatus.WAITING
+                    item.out_of_stock_since = dt_util.utcnow()
+                    continue
+                self._apply_product(item, product)
+                item.status = ItemStatus.IN_CART
+                item.out_of_stock_since = None
+                to_push.append(item)
+            error = await self._push(to_push)
+            self._changed()
+        if to_push:
+            names = ", ".join(i.name for i in to_push)
+            await self._async_notify(
+                "Held items added to your cart",
+                f"Added for your order: {names}.",
+            )
+        result: dict[str, Any] = {"pushed": len(to_push)}
+        if error:
+            result["error"] = error
+        return result
+
+    def _item_or_none(self, item_id: str) -> ListItem | None:
+        return next((i for i in self.data.items if i.id == item_id), None)
+
+    def _announce_back_in_stock(
+        self, pushed: list[ListItem], held: list[ListItem]
+    ) -> None:
+        self.hass.bus.async_fire(
+            EVENT_BACK_IN_STOCK,
+            {
+                "pushed": [{"item_id": i.id, "name": i.name} for i in pushed],
+                "held": [{"item_id": i.id, "name": i.name} for i in held],
+                "config_entry_id": self.config_entry.entry_id,
+            },
+        )
+        lines = []
+        if pushed:
+            lines.append(
+                "Added to your cart: " + ", ".join(i.name for i in pushed) + "."
+            )
+        if held:
+            when = self.next_push_date()
+            day = f"{when:%A}" if when else "your order day"
+            lines.append(
+                "Held until " + day + ": " + ", ".join(i.name for i in held) + "."
+            )
+        self.config_entry.async_create_task(
+            self.hass,
+            self._async_notify("Back in stock", " ".join(lines)),
+            "kroger_restock notify",
+        )
+
+    async def _async_notify(self, title: str, message: str) -> None:
+        """Send to each configured notify target, or a persistent notification."""
+        targets = self.notify_targets
+        if not targets:
+            persistent_notification.async_create(
+                self.hass,
+                message,
+                title=title,
+                notification_id=f"{DOMAIN}_{self.config_entry.entry_id}",
+            )
+            return
+        for target in targets:
+            domain, _, service = target.partition(".")
+            if not service:
+                domain, service = "notify", domain
+            try:
+                await self.hass.services.async_call(
+                    domain,
+                    service,
+                    {"title": title, "message": message},
+                    blocking=True,
+                )
+            except HomeAssistantError as err:
+                _LOGGER.warning("Could not notify %s: %s", target, err)
+
+    def _give_up_issue_id(self, item_id: str) -> str:
+        return f"{ISSUE_GAVE_UP}_{self.config_entry.entry_id}_{item_id}"
+
+    def _flag_give_ups(self) -> None:
+        """Raise a Repairs issue per item waiting longer than allowed.
+
+        Items are never removed automatically; the user decides.
+        """
+        now = dt_util.utcnow()
+        for item in self.data.items:
+            if item.status != ItemStatus.WAITING:
+                continue
+            if not waited_too_long(
+                now, item.out_of_stock_since, item.give_up_snoozed_at, self.give_up_days
+            ):
+                continue
+            since = item.out_of_stock_since or now
+            ir.async_create_issue(
+                self.hass,
+                DOMAIN,
+                self._give_up_issue_id(item.id),
+                is_fixable=True,
+                is_persistent=False,
+                severity=ir.IssueSeverity.WARNING,
+                translation_key=ISSUE_GAVE_UP,
+                translation_placeholders={
+                    "name": item.name,
+                    "days": str((now - since).days),
+                },
+                data={"entry_id": self.config_entry.entry_id, "item_id": item.id},
+            )
+
+    def _clear_stale_give_up_issues(self) -> None:
+        registry = ir.async_get(self.hass)
+        prefix = f"{ISSUE_GAVE_UP}_{self.config_entry.entry_id}_"
+        waiting = {i.id for i in self.data.items if i.status == ItemStatus.WAITING}
+        for domain, issue_id in list(registry.issues):
+            if domain != DOMAIN or not issue_id.startswith(prefix):
+                continue
+            if issue_id.removeprefix(prefix) not in waiting:
+                ir.async_delete_issue(self.hass, DOMAIN, issue_id)
+
+    async def async_keep_waiting(self, item_id: str) -> None:
+        """User chose to keep waiting: restart the give-up clock."""
+        async with self._lock:
+            item = self.get_item(item_id)
+            item.give_up_snoozed_at = dt_util.utcnow()
+            ir.async_delete_issue(self.hass, DOMAIN, self._give_up_issue_id(item_id))
+            self._changed()
+
     async def async_move(self, item_id: str, previous_id: str | None) -> None:
         """Reorder an item after ``previous_id`` (or to the top)."""
         async with self._lock:
@@ -699,6 +1029,8 @@ class KrogerRestockCoordinator(DataUpdateCoordinator[RestockData]):
     def last_stock_check(self) -> datetime | None:
         """Most recent stock check across all items."""
         checks = [i.last_stock_check for i in self.data.items if i.last_stock_check]
+        if self._last_cycle is not None:
+            checks.append(self._last_cycle)
         return max(checks) if checks else None
 
 

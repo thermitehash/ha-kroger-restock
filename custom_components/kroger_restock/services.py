@@ -26,6 +26,8 @@ from .const import (
     ATTR_UPC,
     DOMAIN,
     SERVICE_ADD_ITEM,
+    SERVICE_CHECK_STOCK,
+    SERVICE_READD_ITEM,
     SERVICE_RESOLVE_ITEM,
     SERVICE_SCAN_UPC,
     SERVICE_SYNC,
@@ -66,6 +68,7 @@ RESOLVE_SCHEMA = vol.Schema(
     }
 )
 SYNC_SCHEMA = vol.Schema(_ENTRY)
+READD_SCHEMA = vol.Schema({**_ENTRY, vol.Required(ATTR_ITEM_ID): cv.string})
 
 
 def _coordinator(call: ServiceCall) -> KrogerRestockCoordinator:
@@ -128,6 +131,19 @@ async def _sync(call: ServiceCall) -> ServiceResponse:
     return _maybe(call, await _coordinator(call).async_sync())
 
 
+async def _readd_item(call: ServiceCall) -> ServiceResponse:
+    response = await _coordinator(call).async_readd(call.data[ATTR_ITEM_ID])
+    return _maybe(call, response)
+
+
+async def _check_stock(call: ServiceCall) -> ServiceResponse:
+    coordinator = _coordinator(call)
+    result = await coordinator.async_check_stock()
+    held = await coordinator.async_push_held()
+    result["held_pushed"] = held["pushed"]
+    return _maybe(call, result)
+
+
 @callback
 def async_setup_services(hass: HomeAssistant) -> None:
     """Register the integration's actions."""
@@ -136,6 +152,8 @@ def async_setup_services(hass: HomeAssistant) -> None:
         (SERVICE_ADD_ITEM, _add_item, ADD_SCHEMA),
         (SERVICE_RESOLVE_ITEM, _resolve_item, RESOLVE_SCHEMA),
         (SERVICE_SYNC, _sync, SYNC_SCHEMA),
+        (SERVICE_READD_ITEM, _readd_item, READD_SCHEMA),
+        (SERVICE_CHECK_STOCK, _check_stock, SYNC_SCHEMA),
     ):
         hass.services.async_register(
             DOMAIN,

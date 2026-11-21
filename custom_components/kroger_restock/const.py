@@ -42,15 +42,18 @@ DEFAULT_LEAD_TIME_DAYS: Final = 1
 WEEKDAYS: Final = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
 
 STORAGE_VERSION: Final = 1
-STORAGE_MINOR_VERSION: Final = 1
+STORAGE_MINOR_VERSION: Final = 2
 
 EVENT_SCANNED: Final = f"{DOMAIN}_scanned"
+EVENT_BACK_IN_STOCK: Final = f"{DOMAIN}_back_in_stock"
 
 # Services
 SERVICE_SCAN_UPC: Final = "scan_upc"
 SERVICE_ADD_ITEM: Final = "add_item"
 SERVICE_RESOLVE_ITEM: Final = "resolve_item"
 SERVICE_SYNC: Final = "sync"
+SERVICE_READD_ITEM: Final = "readd_item"
+SERVICE_CHECK_STOCK: Final = "check_stock"
 
 ATTR_CONFIG_ENTRY_ID: Final = "config_entry_id"
 ATTR_UPC: Final = "upc"

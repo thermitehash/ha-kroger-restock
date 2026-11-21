@@ -19,7 +19,8 @@ async def async_setup_entry(
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Set up buttons."""
-    async_add_entities([SyncButton(entry.runtime_data.coordinator)])
+    coordinator = entry.runtime_data.coordinator
+    async_add_entities([SyncButton(coordinator), CheckStockButton(coordinator)])
 
 
 class SyncButton(KrogerRestockEntity, ButtonEntity):
@@ -34,3 +35,18 @@ class SyncButton(KrogerRestockEntity, ButtonEntity):
     async def async_press(self) -> None:
         """Handle the press."""
         await self.coordinator.async_sync()
+
+
+class CheckStockButton(KrogerRestockEntity, ButtonEntity):
+    """Re-check waiting items now."""
+
+    _attr_translation_key = "check_stock"
+
+    def __init__(self, coordinator: KrogerRestockCoordinator) -> None:
+        """Initialize."""
+        super().__init__(coordinator, "check_stock")
+
+    async def async_press(self) -> None:
+        """Handle the press."""
+        await self.coordinator.async_check_stock()
+        await self.coordinator.async_push_held()

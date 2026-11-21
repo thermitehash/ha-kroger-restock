@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import date
+
 from homeassistant.components.todo import (
     TodoItem,
     TodoItemStatus,
@@ -45,7 +47,7 @@ def _date(value) -> str:  # type: ignore[no-untyped-def]
     return f"{local:%b} {local.day}"
 
 
-def status_line(item: ListItem) -> str:
+def status_line(item: ListItem, push_date: date | None = None) -> str:
     """Return a one-line status, e.g. ``In cart · Aisle 12``."""
     aisle = item.aisle_label
     match item.status:
@@ -64,6 +66,8 @@ def status_line(item: ListItem) -> str:
             )
         case ItemStatus.HELD:
             text = "Back in stock · held for order day"
+            if push_date is not None:
+                text = f"Back in stock · cart push {push_date:%a} {push_date.day}"
         case ItemStatus.NEEDS_REVIEW:
             text = "Needs review"
             if item.candidates:
@@ -110,8 +114,9 @@ class KrogerRestockTodoList(KrogerRestockEntity, TodoListEntity):
 
     def _update_items(self) -> None:
         items: list[TodoItem] = []
+        push_date = self.coordinator.next_push_date()
         for item in self.coordinator.items:
-            description = status_line(item)
+            description = status_line(item, push_date)
             if item.note:
                 description = f"{description}\n{item.note}"
             items.append(
@@ -158,7 +163,8 @@ class KrogerRestockTodoList(KrogerRestockEntity, TodoListEntity):
         if note is not None:
             # Drop our generated status line so only the user's note is kept.
             first, _, rest = note.partition("\n")
-            note = rest if first == status_line(current) else note
+            generated = status_line(current, self.coordinator.next_push_date())
+            note = rest if first == generated else note
         await self.coordinator.async_edit(item.uid, item.summary, note)
 
     async def async_delete_todo_items(self, uids: list[str]) -> None:

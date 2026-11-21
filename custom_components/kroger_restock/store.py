@@ -26,6 +26,7 @@ _DATETIME_FIELDS = (
     "out_of_stock_since",
     "cart_pushed_at",
     "received_at",
+    "give_up_snoozed_at",
 )
 
 
@@ -59,6 +60,8 @@ class ListItem:
     out_of_stock_since: datetime | None = None
     cart_pushed_at: datetime | None = None
     received_at: datetime | None = None
+    # Set when the user chose "keep waiting" on a give-up repair.
+    give_up_snoozed_at: datetime | None = None
 
     @property
     def active(self) -> bool:
@@ -113,7 +116,10 @@ class _VersionedStore(Store[dict[str, Any]]):
         old_minor_version: int,
         old_data: dict[str, Any],
     ) -> dict[str, Any]:
-        # Version 1.1 is the first format. Future migrations go here.
+        if old_major_version == 1 and old_minor_version < 2:
+            # 1.2 added give_up_snoozed_at to items.
+            for item in old_data.get("items", []):
+                item.setdefault("give_up_snoozed_at", None)
         return old_data
 
 

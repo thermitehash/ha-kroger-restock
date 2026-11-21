@@ -174,11 +174,18 @@
       },
       "last_stock_check": {
         "name": "Last stock check"
+      },
+      "held": {
+        "name": "Held for order day",
+        "unit_of_measurement": "items"
       }
     },
     "button": {
       "sync": {
         "name": "Sync now"
+      },
+      "check_stock": {
+        "name": "Check stock now"
       }
     }
   },
@@ -221,6 +228,24 @@
     "auth_expired": {
       "title": "Kroger sign-in expired",
       "description": "Kroger stopped accepting the saved sign-in for {title}. Open Settings → Devices & services and re-authenticate Kroger Restock. Scans are still added to the list but cannot reach your cart until you do."
+    },
+    "gave_up": {
+      "title": "{name} has been out of stock for {days} days",
+      "fix_flow": {
+        "step": {
+          "init": {
+            "title": "{name} is still out of stock",
+            "description": "It has been waiting {days} days. Keep it on the list and keep checking, or remove it.",
+            "menu_options": {
+              "keep_waiting": "Keep waiting",
+              "remove": "Remove from list"
+            }
+          }
+        },
+        "abort": {
+          "not_loaded": "Kroger Restock is not loaded."
+        }
+      }
     }
   },
   "services": {
@@ -289,6 +314,30 @@
     "sync": {
       "name": "Sync cart",
       "description": "Pushes any in-cart items whose cart push is still pending. Units already pushed are never sent again.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Config entry",
+          "description": "The Kroger Restock entry to use. Only needed if you have more than one."
+        }
+      }
+    },
+    "readd_item": {
+      "name": "Re-add item",
+      "description": "Puts an item back on the list and pushes it to the cart again after a stock check. Use it when an order was shorted at pickup. This is the only way an item already pushed is pushed again.",
+      "fields": {
+        "item_id": {
+          "name": "Item ID",
+          "description": "The list item's ID (from the scan response or the item's attributes)."
+        },
+        "config_entry_id": {
+          "name": "Config entry",
+          "description": "The Kroger Restock entry to use. Only needed if you have more than one."
+        }
+      }
+    },
+    "check_stock": {
+      "name": "Check stock",
+      "description": "Re-checks every waiting item now. Items back in stock are pushed to the cart, or held until the order window if order days are set.",
       "fields": {
         "config_entry_id": {
           "name": "Config entry",
