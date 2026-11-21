@@ -5,7 +5,8 @@
 # calls kroger_restock.scan_upc with source: esphome. The Atom's RGB LED
 # shows the result (driven by esphome/ha_feedback_automation.yaml):
 #   green = in cart (or quantity +1), amber = waiting on stock,
-#   blue = needs review, red = unmatched / error.
+#   blue = needs review, red = unmatched / error,
+#   amber double blink = ignored QR / non-product code (aim at the barcode).
 # The base's own beep confirms each read.
 #
 # Built-in button: short press = print the list on the receipt printer,
@@ -56,7 +57,8 @@ api:
     key: !secret kroger_scanner_api_key
   actions:
     # Called by the Home Assistant automation on kroger_restock_scanned.
-    # result: in_cart | duplicate | waiting | needs_review | unmatched | error
+    # result: in_cart | duplicate | waiting | needs_review | unmatched |
+    #         ignored | error
     - action: feedback
       variables:
         result: string
@@ -66,6 +68,8 @@ api:
               id(show_color).execute(0.0f, 1.0f, 0.0f);      // green
             } else if (result == "waiting") {
               id(show_color).execute(1.0f, 0.55f, 0.0f);     // amber
+            } else if (result == "ignored") {
+              id(blink_ignored).execute();
             } else if (result == "needs_review") {
               id(show_color).execute(0.0f, 0.3f, 1.0f);      // blue
             } else {
@@ -114,6 +118,7 @@ uart:
               continue;
             } else {
               ESP_LOGD("scanner", "Ignoring non-product code");
+              id(blink_ignored).execute();
               return;
             }
           }
@@ -218,6 +223,23 @@ script:
             - script.execute: { id: show_color, r: 0.0, g: 1.0, b: 1.0 }
           else:
             - script.execute: { id: show_color, r: 1.0, g: 0.0, b: 0.0 }
+
+  # Ignored QR / non-product code: amber, blinked twice (waiting is solid).
+  - id: blink_ignored
+    mode: restart
+    then:
+      - repeat:
+          count: 2
+          then:
+            - light.turn_on:
+                id: status_led
+                brightness: 60%
+                red: 1.0
+                green: 0.55
+                blue: 0.0
+            - delay: 200ms
+            - light.turn_off: status_led
+            - delay: 200ms
 
   # Show a color for 1.5 s, then turn the LED off.
   - id: show_color

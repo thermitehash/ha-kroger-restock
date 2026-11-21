@@ -22,7 +22,7 @@ def product_payload(
     size: str | None = "1 gal",
     stock: str | None = "HIGH",
     aisle: str | None = "12",
-    aisle_description: str | None = "DAIRY",
+    aisle_description: str | None = None,
     price: float | None = 3.49,
     promo: float | None = 0,
 ) -> dict[str, Any]:
@@ -56,7 +56,9 @@ def product_payload(
             }
         ],
         "aisleLocations": (
-            [{"number": aisle, "description": aisle_description}] if aisle else []
+            [{"number": aisle, "description": aisle_description or f"AISLE {aisle}"}]
+            if aisle
+            else []
         ),
     }
     return data

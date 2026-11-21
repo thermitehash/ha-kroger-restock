@@ -162,10 +162,32 @@ Successful matches are remembered, and so is any fix you make with
 **QR codes and other codes are ignored.** Packaging often has a QR code
 (recycling info, recipes, GS1 Digital Link) or a Data Matrix code next to the
 UPC. Only plain numeric codes are looked up; anything containing letters,
-slashes, parentheses or control characters is ignored without adding an item
-or firing an event. `scan_upc` returns `{result: ignored, reason:
-not_a_product_barcode}` so a Shortcut can say so. The ESPHome scanner drops
-these codes on the device and stays silent.
+slashes, parentheses or control characters is ignored and no item is added.
+You're told so: `scan_upc` returns `{result: ignored, reason:
+not_a_product_barcode, message: ...}`, a `kroger_restock_scanned` event fires
+with `result: ignored`, and a notification goes out if notification targets
+are set (at most one every 30 s). The ESPHome scanners drop these codes on the
+device and blink amber twice.
+
+**Short UPC-E codes.** 6- and 7-digit codes are treated as UPC-E missing the
+number system and/or check digit: they're expanded to UPC-A, the check digit
+is computed, and then they're normalized as usual (the plain code is still
+tried last).
+
+### Store locations (aisles)
+
+Kroger's aisle *number* isn't always an aisle. An item at a checkout lane can
+come back as number 300 with description "CHECKLANE 15". The description
+decides what's shown:
+
+- "AISLE 12" (or a number with no description) → **Aisle 12**
+- check lanes, registers, front end → the description (**Checklane 15**),
+  grouped under **Front of store** on printouts
+- anything else (seasonal, endcaps, departments) → the description, e.g.
+  **Seasonal**, as its own group
+
+Printouts list numbered aisles first, then named areas, then Front of store,
+then items with no location ("Other").
 
 ## Entities
 
@@ -226,7 +248,7 @@ pushed: true           # false if the cart push failed (it is retried on sync)
 ```
 
 A scan ignored by the debounce returns `{result: duplicate, debounced: true}`.
-A QR code or other non-product code returns `{result: ignored}`.
+A QR code or other non-product code returns `{result: ignored, message: ...}`.
 
 ### `kroger_restock.add_item`
 
@@ -281,7 +303,7 @@ Fired after every scan or text add (not for debounced repeats).
 
 | Key | Example |
 | --- | --- |
-| `result` | `in_cart`, `waiting`, `unmatched`, `needs_review` or `duplicate` |
+| `result` | `in_cart`, `waiting`, `unmatched`, `needs_review`, `duplicate` or `ignored` (QR / non-product code; `message` explains) |
 | `name`, `brand`, `size` | `Coca-Cola Classic Soda`, `Coca-Cola`, `12 fl oz` |
 | `price` | `7.99` |
 | `aisle` | `Aisle 7` |
@@ -451,12 +473,17 @@ Scan a barcode with your iPhone camera and add it straight to the list.
 2. Add **Scan QR or Barcode**.
 3. Add the Home Assistant app's **Perform Action** (called "Call Service" in
    older app versions). Choose your server, then:
-   - **Action:** `kroger_restock.scan_upc`
-   - **Data:**
-     ```yaml
-     upc: <Scanned code>   # tap and insert the "QR/Barcode" variable
-     source: shortcut
+   - **Action:** pick `kroger_restock.scan_upc` **first**. Leaving the Action
+     unset while there's text in the data field crashes the Home Assistant
+     app.
+   - **Data:** exactly this JSON, with the Shortcut's **QR/Barcodes** variable
+     (tap the field, then pick it from the variable bar) placed **inside the
+     quotes** after `"upc":`:
+     ```json
+     {"upc": "<QR/Barcodes variable>", "source": "shortcut"}
      ```
+     The quotes matter: codes start with 0, and without quotes the leading
+     zero is lost.
    - Turn on **Return response** (or "Response data") if it's offered.
 4. Add **Show Result** (or **Show Notification**) and insert the action's
    output. To show just the useful bits, add **Get Dictionary Value** for
@@ -468,8 +495,17 @@ Scan a barcode with your iPhone camera and add it straight to the list.
    - **Back Tap** (any recent iPhone): Settings → Accessibility → Touch →
      Back Tap → Double Tap → **Grocery scan**.
 
-The response `result` is `in_cart`, `waiting`, `unmatched`, `needs_review` or
-`duplicate`.
+The response `result` is `in_cart`, `waiting`, `unmatched`, `needs_review`,
+`duplicate` or `ignored`. For `ignored`, show `message`.
+
+**Cover the QR code.** The iPhone scanner prefers QR codes over barcodes, and
+many bags and boxes have one near the UPC. Cover it with a finger and aim at
+the barcode. If it catches the QR code anyway, the response is `ignored` with
+*"Ignored a QR or non-product code - aim at the barcode and cover any QR
+code"*, and you also get a notification if notification targets are set.
+
+The iPhone scanner returns a UPC-A as 13 digits with a leading 0 (e.g.
+`0040000579793`). That's expected and matches on the first try.
 
 <!-- Screenshot placeholder: the Shortcut -->
 
@@ -565,8 +601,12 @@ These come from Kroger's public API:
 | `profile.compact` scope | **Verified live** (HA 2026.11, Nov 2026: the entry's unique ID is the Kroger profile UUID) |
 | Cart body, 204 response, 13-digit UPC, PICKUP/DELIVERY | Verified against the specs |
 | Rate limits, `stockLevel` values | Verified against the specs |
-| Product lookup, stock level and cart add with live data | Not yet exercised live |
-| Whether a user token works for product calls | Unverified (the client-credentials fallback covers either answer; debug logs show which was used) |
+| Product calls with the **user token** | **Verified live** (v0.6.0, Nov 2026: `products_use_app_token: false`) |
+| Barcode normalization with iPhone scans | **Verified live** (13-digit codes with a leading 0 matched on the first candidate) |
+| `stockLevel` in product responses | **Verified live** (`HIGH` returned) |
+| Cart add | **Verified live** (pushed, `pushed_quantity: 1`; two national-brand items end to end) |
+| Kroger store-brand items | Not yet tested live |
+| Out-of-stock items live (waiting, then back in stock) | Not yet tested live |
 | Whether the cart accepts an out-of-stock UPC | Unknown (`tests/test_live_cart.py`, run locally). The integration never pushes out-of-stock items either way |
 | Refresh-token lifetime | Unknown |
 

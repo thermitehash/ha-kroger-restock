@@ -137,6 +137,13 @@ class ScanResult(StrEnum):
     UNMATCHED = "unmatched"
     NEEDS_REVIEW = "needs_review"
     DUPLICATE = "duplicate"
+    IGNORED = "ignored"
+
+
+IGNORED_MESSAGE: Final = (
+    "Ignored a QR or non-product code - aim at the barcode and cover any QR code"
+)
+IGNORED_NOTIFY_INTERVAL: Final = 30.0  # seconds between "ignored" notifications
 
 
 class StockLevel(StrEnum):

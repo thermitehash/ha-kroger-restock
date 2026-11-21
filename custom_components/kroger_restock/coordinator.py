@@ -57,6 +57,8 @@ from .const import (
     DOMAIN,
     EVENT_BACK_IN_STOCK,
     EVENT_SCANNED,
+    IGNORED_MESSAGE,
+    IGNORED_NOTIFY_INTERVAL,
     MAX_REVIEW_CANDIDATES,
     MISS_CACHE_SECONDS,
     PRODUCT_CACHE_SECONDS,
@@ -164,6 +166,7 @@ class KrogerRestockCoordinator(DataUpdateCoordinator[RestockData]):
         self._miss_cache: dict[str, float] = {}
         self._unsubs: list[CALLBACK_TYPE] = []
         self._needs_revalidation = False
+        self._last_ignored_notice = float("-inf")
         self._check_task: asyncio.Task[Any] | None = None
         self._last_cycle: datetime | None = None
         self.data = RestockData()
@@ -685,11 +688,10 @@ class KrogerRestockCoordinator(DataUpdateCoordinator[RestockData]):
         """Handle a scanned barcode."""
         normalized = normalize_barcode(code)
         if normalized.kind is BarcodeKind.INVALID:
-            # QR code, Data Matrix, URL or other non-product code: ignore it
-            # quietly (no item, no event) so a scanner doesn't beep an error
-            # every time it catches the QR code next to a UPC.
-            _LOGGER.debug("Ignoring non-product code %r", code)
-            return {"result": "ignored", "reason": "not_a_product_barcode"}
+            # QR code, Data Matrix, URL or other non-product code: no item is
+            # added, but tell the user (response, event, notification) so a
+            # scan of the bag's QR code isn't silently lost.
+            return await self._async_ignored(code, source)
         digits = normalized.digits
         now = monotonic()
         last = self._recent_scans.get(digits)
@@ -710,6 +712,42 @@ class KrogerRestockCoordinator(DataUpdateCoordinator[RestockData]):
             self._changed()
         self._fire(outcome, source)
         return self._response(outcome)
+
+    async def _async_ignored(self, code: str, source: ItemSource) -> dict[str, Any]:
+        _LOGGER.debug("Ignoring non-product code %r", code)
+        self.hass.bus.async_fire(
+            EVENT_SCANNED,
+            {
+                "result": str(ScanResult.IGNORED),
+                "item_id": None,
+                "name": None,
+                "brand": None,
+                "size": None,
+                "price": None,
+                "aisle": None,
+                "quantity": 0,
+                "upc": None,
+                "source": str(source),
+                "message": IGNORED_MESSAGE,
+                "config_entry_id": self.config_entry.entry_id,
+            },
+        )
+        now = monotonic()
+        if (
+            self.notify_targets
+            and now - self._last_ignored_notice >= IGNORED_NOTIFY_INTERVAL
+        ):
+            self._last_ignored_notice = now
+            self.config_entry.async_create_task(
+                self.hass,
+                self._async_notify("Scan ignored", IGNORED_MESSAGE),
+                "kroger_restock ignored notice",
+            )
+        return {
+            "result": str(ScanResult.IGNORED),
+            "reason": "not_a_product_barcode",
+            "message": IGNORED_MESSAGE,
+        }
 
     async def _process_scan(
         self, normalized: Any, digits: str, quantity: int, source: ItemSource

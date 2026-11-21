@@ -51,6 +51,8 @@ api:
         - lambda: |-
             if (result == "in_cart" || result == "duplicate") {
               id(feedback_success).execute();
+            } else if (result == "ignored") {
+              id(feedback_ignored).execute();
             } else if (result == "waiting") {
               id(feedback_waiting).execute();
             } else {
@@ -96,6 +98,7 @@ uart:
               continue;
             } else {
               ESP_LOGD("scanner", "Ignoring non-product code");
+              id(feedback_ignored).execute();
               return;
             }
           }
@@ -192,6 +195,20 @@ script:
       - delay: 900ms
       - output.turn_off: led_green
       - output.turn_off: led_red
+
+  # Ignored QR / non-product code: both LEDs (amber-ish) blink twice, silent.
+  - id: feedback_ignored
+    mode: restart
+    then:
+      - repeat:
+          count: 2
+          then:
+            - output.turn_on: led_green
+            - output.turn_on: led_red
+            - delay: 200ms
+            - output.turn_off: led_green
+            - output.turn_off: led_red
+            - delay: 200ms
 
   # Error / unmatched / needs review: long low tone, red LED blinks 3 times
   - id: feedback_error

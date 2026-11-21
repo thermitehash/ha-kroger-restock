@@ -62,7 +62,7 @@ def sample_items() -> list[ListItem]:
             ItemStatus.IN_CART,
             size="1 gal",
             aisle_number="12",
-            aisle_description="DAIRY",
+            aisle_description="AISLE 12",
         ),
         item(
             "Coca-Cola Classic Soda",
@@ -70,30 +70,43 @@ def sample_items() -> list[ListItem]:
             size="12 pk / 12 fl oz",
             quantity=2,
             aisle_number="7",
-            aisle_description="SODA",
+            aisle_description="AISLE 7",
         ),
         item(
             "Large Grade A Eggs",
             ItemStatus.HELD,
             size="12 ct",
             aisle_number="12",
-            aisle_description="DAIRY",
+            aisle_description="AISLE 12",
         ),
         item(
             "Simple Truth Organic Extra Virgin Olive Oil Cold Pressed Imported From Italy",
             ItemStatus.IN_CART,
             size="16.9 fl oz",
             aisle_number="3",
-            aisle_description="OILS & VINEGAR",
+            aisle_description="AISLE 3",
         ),
         item("Bananas", ItemStatus.IN_CART, size="1 lb", aisle_description="PRODUCE"),
         item("Birthday candles", ItemStatus.IN_CART),
+        item(
+            "M&M's Peanut Chocolate Candy",
+            ItemStatus.IN_CART,
+            size="3.27 oz",
+            aisle_number="300",
+            aisle_description="CHECKLANE 15",
+        ),
+        item(
+            "Holiday Paper Napkins",
+            ItemStatus.IN_CART,
+            aisle_number="99",
+            aisle_description="SEASONAL",
+        ),
         item(
             "Häagen-Dazs Vanilla Ice Cream",
             ItemStatus.WAITING,
             size="14 oz",
             aisle_number="20",
-            aisle_description="FROZEN",
+            aisle_description="AISLE 20",
         ),
         item("Café Bustelo Espresso", ItemStatus.WAITING, size="10 oz"),
         item("milk", ItemStatus.NEEDS_REVIEW),
@@ -134,10 +147,12 @@ def test_layout_groups_and_sections() -> None:
     document = doc()
     titles = [s.title for s in document.sections]
     assert titles == [
-        "Aisle 3 · Oils & Vinegar",
-        "Aisle 7 · Soda",
-        "Aisle 12 · Dairy",
+        "Aisle 3",
+        "Aisle 7",
+        "Aisle 12",
         "Produce",
+        "Seasonal",
+        "Front of store",
         "Other",
         SECTION_WAITING,
         SECTION_REVIEW,
@@ -148,8 +163,8 @@ def test_layout_groups_and_sections() -> None:
         "Large Grade A Eggs",
     ]
     # Received items aren't printed.
-    assert document.item_count == 10
-    assert document.footer == "10 items"
+    assert document.item_count == 12
+    assert document.footer == "12 items"
     assert document.date_label == "Sat Nov 21, 2026 3:05 PM"
     assert (
         document.sections[1].lines[0].text
@@ -183,7 +198,8 @@ def test_receipt_golden(width: int, columns: int) -> None:
 
 def test_receipt_bold_headers_and_encoding() -> None:
     data = render_receipt(doc(), 48)
-    assert b"\x1bE\x01Aisle 12 - Dairy\n\x1bE\x00" in data
+    assert b"\x1bE\x01Aisle 12\n\x1bE\x00" in data
+    assert b"\x1bE\x01Front of store\n\x1bE\x00" in data
     assert b"[ ] Coca-Cola Classic Soda (12 pk / 12 fl oz) x2" in data
     # Accents survive in cp437.
     assert "Häagen-Dazs".encode("cp437") in data
@@ -248,10 +264,11 @@ def test_pdf_golden() -> None:
     assert b"/MediaBox [0 0 612 792]" in data  # US letter, in points
     for text in (
         b"Grocery list",
-        b"Aisle 12 - Dairy",
+        b"Aisle 12",
+        b"Front of store",
         b"Waiting - check shelf",
         b"Needs review",
-        b"10 items",
+        b"12 items",
     ):
         assert text in data
     check_golden("grocery_list.pdf", data)

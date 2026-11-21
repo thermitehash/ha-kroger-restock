@@ -63,18 +63,9 @@ def has_valid_check_digit(code: str) -> bool:
     return gs1_check_digit(code[:-1]) == int(code[-1])
 
 
-def expand_upc_e(code: str) -> str | None:
-    """Expand an 8-digit UPC-E code to a 12-digit UPC-A code.
-
-    Returns None if the code is not a plausible UPC-E (number system 0 or 1).
-    """
-    if len(code) != 8 or not code.isdigit():
-        return None
-    number_system = code[0]
-    if number_system not in "01":
-        return None
-    d1, d2, d3, d4, d5, d6 = code[1:7]
-    check = code[7]
+def upc_e_body(number_system: str, six: str) -> str:
+    """Expand a number system + six UPC-E digits to the 11-digit UPC-A body."""
+    d1, d2, d3, d4, d5, d6 = six
     if d6 in "012":
         body = f"{d1}{d2}{d6}0000{d3}{d4}{d5}"
     elif d6 == "3":
@@ -83,7 +74,38 @@ def expand_upc_e(code: str) -> str | None:
         body = f"{d1}{d2}{d3}{d4}00000{d5}"
     else:
         body = f"{d1}{d2}{d3}{d4}{d5}0000{d6}"
-    return f"{number_system}{body}{check}"
+    return f"{number_system}{body}"
+
+
+def short_upc_e_candidates(digits: str) -> list[str]:
+    """Product-ID candidates for a 6- or 7-digit UPC-E without all its parts.
+
+    6 digits: the six UPC-E digits with no number system or check digit
+    (number system 0 assumed). 7 digits: either number system + six digits
+    (check digit missing) or six digits + check digit (number system 0). The
+    reading whose check digit verifies comes first.
+    """
+    bodies: list[str] = []
+    if len(digits) == 6:
+        bodies.append(upc_e_body("0", digits))
+    elif len(digits) == 7:
+        with_check = upc_e_body("0", digits[:6])
+        if gs1_check_digit(with_check) == int(digits[6]):
+            bodies.append(with_check)
+        if digits[0] in "01":
+            bodies.append(upc_e_body(digits[0], digits[1:]))
+    # Rule 1 on the expanded UPC-A: the product ID is the body, left-padded.
+    return [_pad(body) for body in bodies]
+
+
+def expand_upc_e(code: str) -> str | None:
+    """Expand an 8-digit UPC-E code to a 12-digit UPC-A code.
+
+    Returns None if the code is not a plausible UPC-E (number system 0 or 1).
+    """
+    if len(code) != 8 or not code.isdigit() or code[0] not in "01":
+        return None
+    return upc_e_body(code[0], code[1:7]) + code[7]
 
 
 def _pad(code: str) -> str:
@@ -185,9 +207,15 @@ def normalize_barcode(raw: str) -> NormalizedBarcode:
             if has_valid_check_digit(digits):
                 candidates.append(_pad(digits[:-1]))
         candidates.append(_pad(digits))
+    elif length in (6, 7):
+        # UPC-E missing its number system and/or check digit: expand to
+        # UPC-A (computing the check digit), then rule 1, then the fallback.
+        kind = BarcodeKind.UPC_E
+        candidates += short_upc_e_candidates(digits)
+        candidates.append(_pad(digits))
     elif 6 <= length < PRODUCT_ID_LENGTH:
-        # 6, 7, 9, 10, 11 digits: e.g. a UPC-A whose check digit was stripped
-        # by the scanner. Fallback rule only.
+        # 9, 10, 11 digits: e.g. a UPC-A whose check digit was stripped by
+        # the scanner. Fallback rule only.
         candidates.append(_pad(digits))
     else:
         return NormalizedBarcode(raw=raw, digits=digits, kind=BarcodeKind.INVALID)

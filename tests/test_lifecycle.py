@@ -10,6 +10,7 @@ import pytest
 from pytest_homeassistant_custom_component.common import (
     MockConfigEntry,
     async_capture_events,
+    async_mock_service,
 )
 
 from custom_components.kroger_restock.api import KrogerResponseError
@@ -56,7 +57,7 @@ def coke(fake_api: FakeKrogerApi):
             brand="Coca-Cola",
             size="12 fl oz",
             aisle="7",
-            aisle_description="SODA",
+            aisle_description="AISLE 7",
         )
     )
 
@@ -489,12 +490,50 @@ async def test_qr_and_other_codes_are_ignored(
     code: str,
 ) -> None:
     events = async_capture_events(hass, EVENT_SCANNED)
-    result = await scan(hass, code)
-    assert result == {"result": "ignored", "reason": "not_a_product_barcode"}
+    result = await scan(hass, code, source="shortcut")
+    assert result == {
+        "result": "ignored",
+        "reason": "not_a_product_barcode",
+        "message": (
+            "Ignored a QR or non-product code - aim at the barcode and cover any "
+            "QR code"
+        ),
+    }
     assert coordinator(setup_integration).items == []
     assert fake_api.product_calls == []
     await hass.async_block_till_done()
-    assert events == []
+    # An event fires so ESPHome feedback can flash; no item is created.
+    assert [e.data["result"] for e in events] == ["ignored"]
+    assert events[0].data["source"] == "shortcut"
+
+
+async def test_ignored_scan_notifies_when_configured(
+    hass: HomeAssistant,
+    setup_integration: MockConfigEntry,
+    clock,
+) -> None:
+    calls = async_mock_service(hass, "notify", "mobile_app_pixel")
+    await scan(hass, "5088394_V2")  # a bag's QR code, as seen live
+    await hass.async_block_till_done()
+    assert calls == []  # no notify targets configured: response + event only
+
+    hass.config_entries.async_update_entry(
+        setup_integration,
+        options={
+            **setup_integration.options,
+            "notify_targets": ["notify.mobile_app_pixel"],
+        },
+    )
+    await scan(hass, "5088394_V2")
+    await scan(hass, "https://example.com/recycle")  # within 30 s: not repeated
+    await hass.async_block_till_done()
+    assert len(calls) == 1
+    assert calls[0].data["title"] == "Scan ignored"
+    assert "cover any QR code" in calls[0].data["message"]
+    clock[0] += 31
+    await scan(hass, "5088394_V2")
+    await hass.async_block_till_done()
+    assert len(calls) == 2
 
 
 # --- To-do entity ---------------------------------------------------------

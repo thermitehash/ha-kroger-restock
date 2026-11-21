@@ -12,6 +12,7 @@ from typing import Any
 
 from aiohttp import ClientError, ClientResponse, ClientSession, ClientTimeout
 
+from .aisles import locate
 from .const import API_BASE_URL, SEARCH_LIMIT, StockLevel
 
 _LOGGER = logging.getLogger(__name__)
@@ -98,10 +99,8 @@ class Aisle:
 
     @property
     def label(self) -> str | None:
-        """Short label, e.g. 'Aisle 12'."""
-        if self.number and self.number not in {"0", ""}:
-            return f"Aisle {self.number}"
-        return self.description or None
+        """Short label, e.g. 'Aisle 12' or 'Checklane 15'."""
+        return locate(self.number, self.description).label
 
     @property
     def sort_key(self) -> tuple[int, str]:

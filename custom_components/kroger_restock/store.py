@@ -11,6 +11,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
+from .aisles import locate
 from .const import (
     ACTIVE_STATUSES,
     DOMAIN,
@@ -70,10 +71,8 @@ class ListItem:
 
     @property
     def aisle_label(self) -> str | None:
-        """Return e.g. 'Aisle 12' or the aisle description."""
-        if self.aisle_number and self.aisle_number != "0":
-            return f"Aisle {self.aisle_number}"
-        return self.aisle_description
+        """Return e.g. 'Aisle 12', or the location name ('Checklane 15')."""
+        return locate(self.aisle_number, self.aisle_description).label
 
     def as_dict(self) -> dict[str, Any]:
         """Serialize for storage."""

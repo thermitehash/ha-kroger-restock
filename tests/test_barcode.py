@@ -147,3 +147,47 @@ def test_plu(code: str, plu: str, organic: bool, name: str, term: str | None) ->
 def test_invalid(code: str) -> None:
     """Junk is rejected."""
     assert normalize_barcode(code).kind is BarcodeKind.INVALID
+
+
+@pytest.mark.parametrize(
+    ("code", "expected_first"),
+    [
+        # Six UPC-E digits only (no number system, no check digit).
+        ("425261", "0004210000526"),
+        # Six digits + check digit (number system 0 implied).
+        ("4252614", "0004210000526"),
+        # d6 = 5..9 and d6 = 3 / 4 expansion rules, six digits only.
+        ("123455", "0001234500005"),
+        ("123453", "0001230000045"),
+        ("123454", "0001234000005"),
+    ],
+)
+def test_short_upc_e(code: str, expected_first: str) -> None:
+    """6/7-digit UPC-E: expand to UPC-A, compute the check digit, normalize."""
+    result = normalize_barcode(code)
+    assert result.kind is BarcodeKind.UPC_E
+    assert result.candidates[0] == expected_first
+    # The plain fallback is still tried last.
+    assert result.candidates[-1] == code.zfill(13)
+
+
+def test_short_upc_e_with_number_system_no_check() -> None:
+    """7 digits starting 0/1 may be number system + six digits."""
+    result = normalize_barcode("0425261")
+    assert "0004210000526" in result.candidates
+    assert result.candidates[-1] == "0000000425261"
+
+
+def test_short_upc_e_check_digit_matches_full_code() -> None:
+    """Expanding the short form gives the same UPC-A as the full 8-digit code."""
+    full = normalize_barcode("04252614").candidates[0]
+    assert normalize_barcode("425261").candidates[0] == full
+    upc_a = "042100005264"  # UPC-A form of 04252614, check digit 4
+    assert normalize_barcode(upc_a).candidates[0] == full
+
+
+def test_iphone_style_13_digit_upc() -> None:
+    """Seen live: iPhone returns the UPC-A as 13 digits with a leading 0."""
+    result = normalize_barcode("0040000579793")
+    assert result.kind is BarcodeKind.EAN_13
+    assert result.candidates[0] == "0004000057979"

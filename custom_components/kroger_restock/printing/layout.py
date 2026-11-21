@@ -7,10 +7,11 @@ from dataclasses import dataclass, field
 from datetime import datetime
 import unicodedata
 
+from ..aisles import OTHER, locate
 from ..const import ItemStatus
 from ..store import ListItem
 
-OTHER_AISLE = "Other"
+OTHER_AISLE = OTHER
 SECTION_WAITING = "Waiting — check shelf"
 SECTION_REVIEW = "Needs review"
 
@@ -81,25 +82,11 @@ def _line(item: ListItem) -> PrintLine:
 
 
 def _aisle_key(item: ListItem) -> tuple[int, int, str]:
-    number = item.aisle_number
-    try:
-        return (0, int(str(number)), "")
-    except TypeError, ValueError:
-        pass
-    if item.aisle_description:
-        return (1, 0, item.aisle_description.casefold())
-    return (2, 0, "")
+    return locate(item.aisle_number, item.aisle_description).sort_key
 
 
 def _aisle_title(item: ListItem) -> str:
-    if item.aisle_number and item.aisle_number != "0":
-        title = f"Aisle {item.aisle_number}"
-        if item.aisle_description:
-            title += f" · {item.aisle_description.title()}"
-        return title
-    if item.aisle_description:
-        return item.aisle_description.title()
-    return OTHER_AISLE
+    return locate(item.aisle_number, item.aisle_description).group
 
 
 def build_document(
@@ -115,10 +102,6 @@ def build_document(
         if not sections or sections[-1].title != title:
             sections.append(PrintSection(title))
         sections[-1].lines.append(_line(item))
-    # Items without an aisle go last under "Other", even if sort put a
-    # description-only aisle after them.
-    other = [s for s in sections if s.title == OTHER_AISLE]
-    sections = [s for s in sections if s.title != OTHER_AISLE] + other
 
     waiting = sorted(
         (i for i in items if i.status == ItemStatus.WAITING),

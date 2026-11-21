@@ -4,23 +4,30 @@ Cincinnati, OH
 Sat Nov 21, 2026 3:05 PM
 <LEFT>================================
 
-<B>Aisle 3 - Oils & Vinegar
+<B>Aisle 3
 </B>[ ] Simple Truth Organic Extra
     Virgin Olive Oil Cold
     Pressed Imported From Italy
     (16.9 fl oz)
 
-<B>Aisle 7 - Soda
+<B>Aisle 7
 </B>[ ] Coca-Cola Classic Soda (12
     pk / 12 fl oz) x2
 
-<B>Aisle 12 - Dairy
+<B>Aisle 12
 </B>[ ] Kroger 2% Reduced Fat Milk
     (1 gal)
 [ ] Large Grade A Eggs (12 ct)
 
 <B>Produce
 </B>[ ] Bananas (1 lb)
+
+<B>Seasonal
+</B>[ ] Holiday Paper Napkins
+
+<B>Front of store
+</B>[ ] M&M's Peanut Chocolate Candy
+    (3.27 oz)
 
 <B>Other
 </B>[ ] Birthday candles
@@ -36,5 +43,5 @@ Sat Nov 21, 2026 3:05 PM
 [ ] 012345678905
 
 ================================
-<CENTER>10 items
+<CENTER>12 items
 <LEFT><CUT>

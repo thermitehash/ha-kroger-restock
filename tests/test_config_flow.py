@@ -294,7 +294,7 @@ async def test_options_change_store(
             "0004900002891",
             "Coca-Cola",
             aisle="3",
-            aisle_description="BEVERAGES",
+            aisle_description="AISLE 3",
             stock="LOW",
         )
     }
