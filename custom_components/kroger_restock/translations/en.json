@@ -101,7 +101,7 @@
           "give_up_days": "Flag an item for review after it has been waiting this many days. Items are never removed automatically.",
           "debounce_seconds": "Ignore repeat scans of the same code within this many seconds.",
           "notify_targets": "Mobile app notify actions to alert when items come back in stock.",
-          "notify_scans": "Send one short push per scan or add to the notification targets (e.g. \"✓ In cart: Milk 1 gal · Aisle 12\"). Rapid scans replace each other instead of stacking. Useful for a looping iPhone Shortcut."
+          "notify_scans": "Send one short push per scan or add to the notification targets (e.g. \"✓ In cart: Milk 1 gal · Aisle 12\"). Rapid scans replace each other instead of stacking. Mainly for the ESPHome scanner, which has no screen (an iPhone Shortcut shows the result itself)."
         }
       },
       "store": {

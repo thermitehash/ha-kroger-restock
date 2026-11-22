@@ -567,10 +567,13 @@ Scan a barcode with your iPhone camera and add it straight to the list.
      The quotes matter: codes start with 0, and without quotes the leading
      zero is lost.
    - Turn on **Return response** (or "Response data") if it's offered.
-4. Add **Show Result** (or **Show Notification**) and insert the action's
-   output. To show just the useful bits, add **Get Dictionary Value** for
-   `result`, `name` and `aisle` before it, e.g. *"in_cart: Coca-Cola Classic
-   Soda (Aisle 7)"*.
+     Perform Action hands the action's response back to the Shortcut
+     (verified live with the iOS app).
+4. Add **Get Dictionary Value** actions on the Perform Action output for
+   `result`, `name`, `aisle` and `message`, then **Show Notification** (or
+   **Show Result**) with them, e.g. *"in_cart: Coca-Cola Classic Soda
+   (Aisle 7)"*. Inserting the whole output shows the raw JSON, which also
+   works.
 5. Make it one tap away:
    - **Action button** (iPhone 15 Pro and later): Settings → Action Button →
      Shortcut → **Grocery scan**.
@@ -591,11 +594,9 @@ The iPhone scanner returns a UPC-A as 13 digits with a leading 0 (e.g.
 
 <!-- Screenshot placeholder: the Shortcut -->
 
-**Does Perform Action return the response?** Not yet tested with this
-integration. If your Home Assistant app's Perform Action doesn't hand back
-response data, turn on **Notify on every scan** (Settings page of the
-options) instead: each scan then sends one short push such as
-*"✓ In cart: Coca-Cola Classic Soda 12 fl oz · Aisle 7"*.
+The Shortcut shows the result itself, so you don't need
+[Notify on every scan](#notify-on-every-scan) for iPhone scans; that option
+is mainly for the ESPHome scanner, which has no screen.
 
 ### Add from a Kroger product page (Share Sheet)
 
@@ -614,8 +615,10 @@ isn't a Kroger product page is ignored.
 
 ### Notify on every scan
 
-Off by default (**Configure → Settings → Notify on every scan**). When on,
-every scan, typed add or shared link sends one short push to your
+Off by default (**Configure → Settings → Notify on every scan**). It's
+meant mainly for the [ESPHome wall scanner](#esphome-wall-scanner), which
+has no screen; an iPhone Shortcut already shows the response itself. When
+on, every scan, typed add or shared link sends one short push to your
 notification targets:
 
 | Result | Notification |
@@ -758,10 +761,11 @@ These come from Kroger's public API:
 | Out-of-stock path | **Verified live** (v0.10.0: scanned item went to `waiting`, `pushed: false`, aisle `Produce`) |
 | Named-area aisle rule (`Produce`) | **Verified live** (v0.10.0) |
 | Back in stock → pushed + notified | Not yet tested live |
-| Kroger store-brand items | Not yet tested live |
+| Kroger store-brand items | **Verified live** (v0.11.0: store-brand barcode scanned from iPhone matched, `in_cart`, aisle returned) |
+| QR code scanned by mistake | **Verified live** (`ignored` with the message, nothing added) |
 | PDF print over IPP | IPP printer configured (Nov 2026); printing not yet tested live |
 | Add by product link / `product_id`, Notify on every scan, cart check | New in v0.11.0; tested in CI, not yet live |
-| Shortcut Perform Action returning response data | Not yet tested |
+| Shortcut Perform Action returning response data | **Verified live** (HA iOS app: the `scan_upc` response JSON reached the Shortcut) |
 | Whether the cart accepts an out-of-stock UPC | Unknown (`tests/test_live_cart.py`, run locally). The integration never pushes out-of-stock items either way |
 | Refresh-token lifetime | Unknown |
 
