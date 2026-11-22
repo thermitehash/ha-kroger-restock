@@ -16,6 +16,7 @@ from homeassistant.helpers.typing import ConfigType
 
 from .api import KrogerApiClient, KrogerError
 from .application_credentials import KrogerOAuth2Implementation
+from .cart_check import CartCheck
 from .const import CONF_LOCATION_ADDRESS, CONF_LOCATION_ID, CONF_LOCATION_NAME, DOMAIN
 from .coordinator import (
     ISSUE_AUTH_EXPIRED,
@@ -41,6 +42,7 @@ class KrogerRuntimeData:
     coordinator: KrogerRestockCoordinator
     api: KrogerApiClient
     orders: OrderWatcher
+    cart_check: CartCheck
 
 
 type KrogerConfigEntry = ConfigEntry[KrogerRuntimeData]
@@ -87,8 +89,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: KrogerConfigEntry) -> bo
 
     ir.async_delete_issue(hass, DOMAIN, f"{ISSUE_AUTH_EXPIRED}_{entry.entry_id}")
     orders = OrderWatcher(hass, coordinator)
+    cart_check = CartCheck(hass, coordinator)
     entry.runtime_data = KrogerRuntimeData(
-        coordinator=coordinator, api=api, orders=orders
+        coordinator=coordinator, api=api, orders=orders, cart_check=cart_check
     )
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     # Options changes reload the entry via OptionsFlowWithReload. There is
@@ -99,6 +102,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: KrogerConfigEntry) -> bo
     entry.async_on_unload(coordinator.async_stop)
     orders.async_start()
     entry.async_on_unload(orders.async_stop)
+    cart_check.async_start()
+    entry.async_on_unload(cart_check.async_stop)
     return True
 
 

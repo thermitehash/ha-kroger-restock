@@ -28,12 +28,17 @@ from homeassistant.helpers.selector import (
     TextSelector,
     TextSelectorConfig,
     TextSelectorType,
+    TimeSelector,
 )
 import voluptuous as vol
 
 from .api import KrogerApiClient, KrogerError, Location
 from .application_credentials import KrogerOAuth2Implementation
 from .const import (
+    CONF_CART_CHECK,
+    CONF_CART_CHECK_DAY,
+    CONF_CART_CHECK_HOURS,
+    CONF_CART_CHECK_TIME,
     CONF_DEBOUNCE_SECONDS,
     CONF_EXTRA_SENDER_DOMAINS,
     CONF_GIVE_UP_DAYS,
@@ -45,6 +50,7 @@ from .const import (
     CONF_LOCATION_NAME,
     CONF_MODALITY,
     CONF_NOTIFY_ORDERS,
+    CONF_NOTIFY_SCANS,
     CONF_NOTIFY_TARGETS,
     CONF_ORDER_DAYS,
     CONF_PAPER_WIDTH,
@@ -53,6 +59,9 @@ from .const import (
     CONF_SAVE_PDF,
     CONF_STOCK_CHECK_HOURS,
     CONF_ZIP_CODE,
+    DEFAULT_CART_CHECK_DAY,
+    DEFAULT_CART_CHECK_HOURS,
+    DEFAULT_CART_CHECK_TIME,
     DEFAULT_DEBOUNCE_SECONDS,
     DEFAULT_GIVE_UP_DAYS,
     DEFAULT_LEAD_TIME_DAYS,
@@ -333,7 +342,8 @@ class KrogerRestockOptionsFlow(OptionsFlowWithReload):
     ) -> ConfigFlowResult:
         """Choose what to change."""
         return self.async_show_menu(
-            step_id="init", menu_options=["settings", "store", "printing", "orders"]
+            step_id="init",
+            menu_options=["settings", "store", "printing", "orders", "cart_check"],
         )
 
     async def async_step_settings(
@@ -418,6 +428,9 @@ class KrogerRestockOptionsFlow(OptionsFlowWithReload):
                         mode=SelectSelectorMode.DROPDOWN,
                     )
                 ),
+                vol.Required(
+                    CONF_NOTIFY_SCANS, default=self._get(CONF_NOTIFY_SCANS, False)
+                ): BooleanSelector(),
             }
         )
         return self.async_show_form(step_id="settings", data_schema=schema)
@@ -582,3 +595,46 @@ class KrogerRestockOptionsFlow(OptionsFlowWithReload):
                 "warnings": "\n".join(f"- {w}" for w in warnings)
             },
         )
+
+    async def async_step_cart_check(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Weekly "does this match your Kroger cart?" prompt."""
+        if user_input is not None:
+            return self.async_create_entry(
+                data={**self.config_entry.options, **user_input}
+            )
+        schema = vol.Schema(
+            {
+                vol.Required(
+                    CONF_CART_CHECK, default=self._get(CONF_CART_CHECK, False)
+                ): BooleanSelector(),
+                vol.Required(
+                    CONF_CART_CHECK_HOURS,
+                    default=self._get(CONF_CART_CHECK_HOURS, DEFAULT_CART_CHECK_HOURS),
+                ): NumberSelector(
+                    NumberSelectorConfig(
+                        min=1,
+                        max=72,
+                        step=1,
+                        unit_of_measurement="h",
+                        mode=NumberSelectorMode.BOX,
+                    )
+                ),
+                vol.Required(
+                    CONF_CART_CHECK_DAY,
+                    default=self._get(CONF_CART_CHECK_DAY, DEFAULT_CART_CHECK_DAY),
+                ): SelectSelector(
+                    SelectSelectorConfig(
+                        options=list(WEEKDAYS),
+                        translation_key=CONF_ORDER_DAYS,
+                        mode=SelectSelectorMode.DROPDOWN,
+                    )
+                ),
+                vol.Required(
+                    CONF_CART_CHECK_TIME,
+                    default=self._get(CONF_CART_CHECK_TIME, DEFAULT_CART_CHECK_TIME),
+                ): TimeSelector(),
+            }
+        )
+        return self.async_show_form(step_id="cart_check", data_schema=schema)

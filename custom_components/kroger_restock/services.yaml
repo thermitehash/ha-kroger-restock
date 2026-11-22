@@ -1,11 +1,18 @@
 scan_upc:
   fields:
+    product_id:
+      example: "0082415011716"
+      selector:
+        text:
+    url:
+      example: "https://www.kroger.com/p/item/0082415011716"
+      selector:
+        text:
     already_in_cart:
       default: false
       selector:
         boolean:
     upc:
-      required: true
       example: "049000028911"
       selector:
         text:
@@ -39,8 +46,11 @@ add_item:
       selector:
         boolean:
     name:
-      required: true
       example: "Greek yogurt"
+      selector:
+        text:
+    url:
+      example: "https://www.kroger.com/p/item/0082415011716"
       selector:
         text:
     quantity:
@@ -154,6 +164,13 @@ check_cart_item:
             - confirm
             - push_again
             - remove
+    config_entry_id:
+      selector:
+        config_entry:
+          integration: kroger_restock
+
+cart_check:
+  fields:
     config_entry_id:
       selector:
         config_entry:

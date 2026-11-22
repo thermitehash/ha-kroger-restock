@@ -77,7 +77,8 @@
           "settings": "Settings",
           "store": "Change store",
           "printing": "Printing",
-          "orders": "Order tracking"
+          "orders": "Order tracking",
+          "cart_check": "Cart check"
         }
       },
       "settings": {
@@ -89,7 +90,8 @@
           "stock_check_hours": "Stock check interval",
           "give_up_days": "Give-up after",
           "debounce_seconds": "Scan debounce",
-          "notify_targets": "Notification targets"
+          "notify_targets": "Notification targets",
+          "notify_scans": "Notify on every scan"
         },
         "data_description": {
           "modality": "How items pushed to your cart will be fulfilled.",
@@ -98,7 +100,8 @@
           "stock_check_hours": "How often waiting items are checked for stock.",
           "give_up_days": "Flag an item for review after it has been waiting this many days. Items are never removed automatically.",
           "debounce_seconds": "Ignore repeat scans of the same code within this many seconds.",
-          "notify_targets": "Mobile app notify actions to alert when items come back in stock."
+          "notify_targets": "Mobile app notify actions to alert when items come back in stock.",
+          "notify_scans": "Send one short push per scan or add to the notification targets (e.g. \"✓ In cart: Milk 1 gal · Aisle 12\"). Rapid scans replace each other instead of stacking. Useful for a looping iPhone Shortcut."
         }
       },
       "store": {
@@ -155,6 +158,22 @@
       "orders_confirm": {
         "title": "This IMAP connection may miss order emails",
         "description": "{warnings}\n\nSubmit to use it anyway, or close this dialog and fix the IMAP connection's options first."
+      },
+      "cart_check": {
+        "title": "Pre-order cart check",
+        "description": "Kroger's API can't read your cart. Before each order day you get a notification listing what Home Assistant thinks is in the Kroger cart, with buttons to confirm it matches or record anything that's missing from Home Assistant. It never changes the cart.",
+        "data": {
+          "cart_check": "Send a cart check",
+          "cart_check_hours_before": "Hours before each order day",
+          "cart_check_day": "Day (when no order days are set)",
+          "cart_check_time": "Time (when no order days are set)"
+        },
+        "data_description": {
+          "cart_check": "Off by default.",
+          "cart_check_hours_before": "Counted back from the start (midnight) of each order day set in Settings. 6 = 6 pm the evening before.",
+          "cart_check_day": "Used only if no order days are set: the check goes out weekly on this day.",
+          "cart_check_time": "Used only if no order days are set."
+        }
       }
     },
     "error": {
@@ -361,11 +380,11 @@
   "services": {
     "scan_upc": {
       "name": "Scan barcode",
-      "description": "Adds a scanned barcode to the list. In-stock products are pushed to the Kroger cart; out-of-stock products wait on the list; unknown codes are added as unmatched.",
+      "description": "Adds a product by scanned barcode, Kroger product ID or kroger.com link. In-stock products are pushed to the Kroger cart; out-of-stock products wait on the list; unknown codes are added as unmatched.",
       "fields": {
         "upc": {
           "name": "Barcode",
-          "description": "The scanned UPC-A, UPC-E, EAN-13 or produce PLU code."
+          "description": "The scanned UPC-A, UPC-E, EAN-13 or produce PLU code. Give one of Barcode, Product ID or Link."
         },
         "quantity": {
           "name": "Quantity",
@@ -382,6 +401,14 @@
         "already_in_cart": {
           "name": "Already in cart",
           "description": "The item is already in your Kroger cart (for example, added in the Kroger app). It's recorded as in the cart and nothing is sent to Kroger."
+        },
+        "product_id": {
+          "name": "Product ID",
+          "description": "A 13-digit Kroger product ID, looked up directly (no barcode guessing)."
+        },
+        "url": {
+          "name": "Link",
+          "description": "A kroger.com (or Kroger-family banner) product link, or shared text containing one. The product ID is taken from the link."
         }
       }
     },
@@ -391,7 +418,7 @@
       "fields": {
         "name": {
           "name": "Name",
-          "description": "What to add, e.g. \"Greek yogurt\"."
+          "description": "What to add, e.g. \"Greek yogurt\". Give a name or a link."
         },
         "quantity": {
           "name": "Quantity",
@@ -408,6 +435,10 @@
         "already_in_cart": {
           "name": "Already in cart",
           "description": "The item is already in your Kroger cart (for example, added in the Kroger app). It's recorded as in the cart and nothing is sent to Kroger."
+        },
+        "url": {
+          "name": "Link",
+          "description": "A kroger.com (or Kroger-family banner) product link, or shared text containing one. The product ID is taken from the link."
         }
       }
     },
@@ -507,6 +538,16 @@
           "name": "Action",
           "description": "confirm = it's in the cart (no cart call); push_again = it isn't, push it now; remove = take it off the list."
         },
+        "config_entry_id": {
+          "name": "Config entry",
+          "description": "The Kroger Restock entry to use. Only needed if you have more than one."
+        }
+      }
+    },
+    "cart_check": {
+      "name": "Send cart check",
+      "description": "Sends the pre-order cart check now: what Home Assistant believes is in your Kroger cart, with buttons to confirm or record missing items. Returns the same list. Never changes the cart.",
+      "fields": {
         "config_entry_id": {
           "name": "Config entry",
           "description": "The Kroger Restock entry to use. Only needed if you have more than one."

@@ -38,6 +38,7 @@ guide, and an ESPHome wall scanner. See [Roadmap](#roadmap).
 - [Scanning with an iPhone Shortcut](#scanning-with-an-iphone-shortcut)
 - [Blueprint and examples](#blueprint-and-examples)
 - [Options](#options)
+- [Pre-order cart check](#pre-order-cart-check)
 - [Limitations](#limitations)
 - [Troubleshooting](#troubleshooting)
 - [Development](#development)
@@ -239,7 +240,9 @@ can show the result. If you have more than one Kroger Restock entry, pass
 
 | Field | Required | Default | Description |
 | --- | --- | --- | --- |
-| `upc` | yes | | UPC-A, UPC-E, EAN-13 or PLU code |
+| `upc` | one of these three | | UPC-A, UPC-E, EAN-13 or PLU code |
+| `product_id` | one of these three | | 13-digit Kroger product ID, looked up directly (no barcode guessing) |
+| `url` | one of these three | | A kroger.com (or Kroger-banner) product link, or shared text containing one |
 | `quantity` | no | 1 | How many |
 | `source` | no | `scan` | `scan`, `shortcut`, `esphome`, `manual` or `assist` |
 
@@ -273,10 +276,19 @@ pushed: true           # false if the cart push failed (it is retried on sync)
 A scan ignored by the debounce returns `{result: duplicate, debounced: true}`.
 A QR code or other non-product code returns `{result: ignored, message: ...}`.
 
+**Links:** product pages look like `https://www.kroger.com/p/<name>/0001111041700`.
+The trailing 13-digit ID is used; query strings (`?fulfillment=PICKUP`) and
+fragments are ignored, and the link can be inside other text (as the Kroger
+app's Share button sends it). A link to any other site, or a Kroger page
+that isn't a product page, returns `{result: ignored}` with *"Ignored a link
+that isn't a Kroger product page"*. `already_in_cart: true` works with
+`product_id` and `url` too.
+
 ### `kroger_restock.add_item`
 
-Adds an item by name (`name`, `quantity`, `source`). Same response shape. If
-the item needs review, the response includes `candidates`.
+Adds an item by name (`name`, `quantity`, `source`), or by product link
+(`url`, same rules as `scan_upc`). Same response shape. If the item needs
+review, the response includes `candidates`.
 
 ### `kroger_restock.resolve_item`
 
@@ -330,6 +342,12 @@ Prints the list. `target`: `receipt`, `pdf` or `both` (default). Returns
 `items`, `receipt` (`printed`, `failed` or `not_configured`) and `pdf`
 (`path` of the saved file and whether it was `printed`). See
 [Printing](#printing).
+
+### `kroger_restock.cart_check`
+
+Sends the [pre-order cart check](#pre-order-cart-check) now and returns
+`in_cart` (`item_id`, `name`, `quantity`), `unconfirmed` and `waiting`.
+Never changes the cart.
 
 ## Events
 
@@ -573,6 +591,45 @@ The iPhone scanner returns a UPC-A as 13 digits with a leading 0 (e.g.
 
 <!-- Screenshot placeholder: the Shortcut -->
 
+**Does Perform Action return the response?** Not yet tested with this
+integration. If your Home Assistant app's Perform Action doesn't hand back
+response data, turn on **Notify on every scan** (Settings page of the
+options) instead: each scan then sends one short push such as
+*"✓ In cart: Coca-Cola Classic Soda 12 fl oz · Aisle 7"*.
+
+### Add from a Kroger product page (Share Sheet)
+
+Add something you found on kroger.com or in the Kroger app without scanning:
+
+1. New shortcut named **Add to Kroger list**. In its details (ⓘ), turn on
+   **Show in Share Sheet** and set it to receive **URLs** and **Text**.
+2. Add **Perform Action**, action `kroger_restock.scan_upc`, data:
+   ```json
+   {"url": "[Shortcut Input]", "source": "shortcut"}
+   ```
+   with the **Shortcut Input** variable inside the quotes.
+
+Then on a product page tap **Share → Add to Kroger list**. A link that
+isn't a Kroger product page is ignored.
+
+### Notify on every scan
+
+Off by default (**Configure → Settings → Notify on every scan**). When on,
+every scan, typed add or shared link sends one short push to your
+notification targets:
+
+| Result | Notification |
+| --- | --- |
+| Added and pushed | ✓ In cart: *name size* · *aisle* |
+| Out of stock | ⏳ Waiting on stock: *name* |
+| Unknown barcode | ? Unknown code *code* |
+| Already on the list | ↺ Already on list (qty N): *name* |
+| Needs you to pick | • Needs review: *what you typed* |
+| QR code / not a product | ⊘ Ignored: aim at the barcode |
+
+They share one notification tag, so rapid scans replace each other instead
+of piling up. With no notification targets set, nothing is sent.
+
 ## Blueprint and examples
 
 ### "At the store" blueprint
@@ -625,12 +682,38 @@ In [`examples/`](examples/). Paste one into a new automation with
 - **Notification targets:** `notify.mobile_app_*` actions. With none chosen,
   you get a persistent notification in Home Assistant instead.
 
+- **Notify on every scan** (default off): see
+  [Notify on every scan](#notify-on-every-scan).
+
+**Cart check** (its own page in the options menu): see
+[Pre-order cart check](#pre-order-cart-check).
+
 **Printing** (its own page in the options menu):
 
 - **Receipt printer host** and **port** (default 9100)
 - **Paper width:** 58 mm or 80 mm (default 80 mm)
 - **PDF printer (IPP URL):** optional
 - **Save PDFs to /media/kroger_restock** (default on)
+
+## Pre-order cart check
+
+Kroger's API can't read your cart, so Home Assistant only knows what it
+pushed. The cart check asks you to compare before you order:
+
+- **When:** with order days set, `hours before` the start (midnight) of each
+  order day (default 6 → 6 pm the evening before). With no order days, weekly
+  on the chosen day and time (default Saturday 6 pm). Off by default:
+  **Configure → Cart check**.
+- **What it says:** *"Home Assistant thinks your Kroger cart has 3 items:
+  Coca-Cola ×2, Eggs ×1. 2 waiting on stock."* Unconfirmed pushes (Repairs)
+  are listed separately.
+- **Buttons:** **Matches** (dismiss) · **Something's missing from HA** (type
+  item names, comma-separated; each is recorded with `already_in_cart: true`,
+  so it's on the list but not pushed) · **Open list**.
+- It **never changes the Kroger cart.** Without notification targets it
+  becomes a persistent notification (no buttons).
+- Run it any time with `kroger_restock.cart_check`, which returns
+  `in_cart`, `unconfirmed` and `waiting`.
 
 ## Limitations
 
@@ -671,8 +754,14 @@ These come from Kroger's public API:
 | Cart add | **Verified live** (pushed, `pushed_quantity: 1`; two national-brand items end to end) |
 | Store attributes (`store_name`, `store_address`, `location_id`) and the checklane aisle rule | **Verified live** (v0.8.0) |
 | Items and debug log level survive an update + restart | **Verified live** (v0.8.0) |
+| Order-email folder baseline against real Gmail | **Verified live** (v0.10.0: linking didn't process existing order mail; the "Baselined N" info line wasn't checked because logging was at WARNING) |
+| Out-of-stock path | **Verified live** (v0.10.0: scanned item went to `waiting`, `pushed: false`, aisle `Produce`) |
+| Named-area aisle rule (`Produce`) | **Verified live** (v0.10.0) |
+| Back in stock → pushed + notified | Not yet tested live |
 | Kroger store-brand items | Not yet tested live |
-| Out-of-stock items live (waiting, then back in stock) | Not yet tested live |
+| PDF print over IPP | IPP printer configured (Nov 2026); printing not yet tested live |
+| Add by product link / `product_id`, Notify on every scan, cart check | New in v0.11.0; tested in CI, not yet live |
+| Shortcut Perform Action returning response data | Not yet tested |
 | Whether the cart accepts an out-of-stock UPC | Unknown (`tests/test_live_cart.py`, run locally). The integration never pushes out-of-stock items either way |
 | Refresh-token lifetime | Unknown |
 

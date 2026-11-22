@@ -69,3 +69,42 @@ def waited_too_long(
     if not starts:
         return False
     return now - max(starts) > timedelta(days=give_up_days)
+
+
+def next_cart_check(
+    now: datetime,
+    order_days: Iterable[str],
+    hours_before: float,
+    fallback_day: str,
+    fallback_time: str,
+) -> datetime:
+    """Next pre-order cart check, in ``now``'s time zone.
+
+    With order days: ``hours_before`` before the start (midnight) of each
+    order day. Without: weekly on ``fallback_day`` at ``fallback_time``
+    ("HH:MM" or "HH:MM:SS").
+    """
+    tz = now.tzinfo
+    days = _weekday_numbers(order_days)
+    candidates: list[datetime] = []
+    if days:
+        for offset in range(9):
+            day = now.date() + timedelta(days=offset)
+            if day.weekday() in days:
+                start = datetime.combine(day, datetime.min.time(), tz)
+                candidates.append(start - timedelta(hours=hours_before))
+    else:
+        hour, minute, *_ = (int(p) for p in fallback_time.split(":"))
+        weekday = WEEKDAYS.index(fallback_day) if fallback_day in WEEKDAYS else 5
+        for offset in range(8):
+            day = now.date() + timedelta(days=offset)
+            if day.weekday() == weekday:
+                candidates.append(
+                    datetime.combine(day, datetime.min.time(), tz).replace(
+                        hour=hour, minute=minute
+                    )
+                )
+    future = [c for c in candidates if c > now]
+    if not future:  # pragma: no cover - always found within 9 days
+        return now + timedelta(days=7)
+    return min(future)

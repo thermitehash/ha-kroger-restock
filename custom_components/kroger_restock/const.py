@@ -28,6 +28,14 @@ CONF_GIVE_UP_DAYS: Final = "give_up_days"
 CONF_ORDER_DAYS: Final = "order_days"
 CONF_LEAD_TIME_DAYS: Final = "lead_time_days"
 CONF_NOTIFY_TARGETS: Final = "notify_targets"
+CONF_NOTIFY_SCANS: Final = "notify_scans"
+CONF_CART_CHECK: Final = "cart_check"
+CONF_CART_CHECK_HOURS: Final = "cart_check_hours_before"
+CONF_CART_CHECK_DAY: Final = "cart_check_day"
+CONF_CART_CHECK_TIME: Final = "cart_check_time"
+DEFAULT_CART_CHECK_HOURS: Final = 6
+DEFAULT_CART_CHECK_DAY: Final = "sat"
+DEFAULT_CART_CHECK_TIME: Final = "18:00:00"
 CONF_RECEIPT_HOST: Final = "receipt_host"
 CONF_RECEIPT_PORT: Final = "receipt_port"
 CONF_PAPER_WIDTH: Final = "paper_width"
@@ -76,6 +84,7 @@ SERVICE_CHECK_STOCK: Final = "check_stock"
 SERVICE_PRINT_LIST: Final = "print_list"
 SERVICE_MARK_CART_RECEIVED: Final = "mark_cart_received"
 SERVICE_CHECK_CART_ITEM: Final = "check_cart_item"
+SERVICE_CART_CHECK: Final = "cart_check"
 
 PRINT_RECEIPT: Final = "receipt"
 PRINT_PDF: Final = "pdf"
@@ -93,6 +102,7 @@ ATTR_TARGET: Final = "target"
 ATTR_MISSING: Final = "missing"
 ATTR_ALREADY_IN_CART: Final = "already_in_cart"
 ATTR_ACTION: Final = "action"
+ATTR_URL: Final = "url"
 
 SEARCH_LIMIT: Final = 10
 MAX_REVIEW_CANDIDATES: Final = 5
@@ -159,6 +169,8 @@ IGNORED_MESSAGE: Final = (
     "Ignored a QR or non-product code - aim at the barcode and cover any QR code"
 )
 IGNORED_NOTIFY_INTERVAL: Final = 30.0  # seconds between "ignored" notifications
+LINK_IGNORED_MESSAGE: Final = "Ignored a link that isn't a Kroger product page"
+SCAN_NOTIFICATION_TAG: Final = "kroger_restock_scan"
 
 
 class StockLevel(StrEnum):

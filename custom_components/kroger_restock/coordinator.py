@@ -35,6 +35,7 @@ from .api import (
 from .barcode import (
     PRODUCT_ID_LENGTH,
     BarcodeKind,
+    NormalizedBarcode,
     normalize_barcode,
     plu_display_name,
     plu_search_term,
@@ -50,6 +51,7 @@ from .const import (
     CONF_LOCATION_ID,
     CONF_LOCATION_NAME,
     CONF_MODALITY,
+    CONF_NOTIFY_SCANS,
     CONF_NOTIFY_TARGETS,
     CONF_ORDER_DAYS,
     CONF_STOCK_CHECK_HOURS,
@@ -63,13 +65,16 @@ from .const import (
     EVENT_SCANNED,
     IGNORED_MESSAGE,
     IGNORED_NOTIFY_INTERVAL,
+    LINK_IGNORED_MESSAGE,
     MAX_REVIEW_CANDIDATES,
     MISS_CACHE_SECONDS,
     PRODUCT_CACHE_SECONDS,
+    SCAN_NOTIFICATION_TAG,
     ItemSource,
     ItemStatus,
     ScanResult,
 )
+from .links import PRODUCT_ID, product_id_from_text
 from .matching import match_item
 from .schedule import check_spacing, in_order_window, next_window_start, waited_too_long
 from .store import ListItem, RestockData, RestockStore
@@ -99,6 +104,33 @@ def async_create_auth_issue(hass: HomeAssistant, entry: ConfigEntry) -> None:
         translation_key=ISSUE_AUTH_EXPIRED,
         translation_placeholders={"title": entry.title},
     )
+
+
+def scan_notification_text(response: dict[str, Any]) -> str | None:
+    """Short text for the per-scan push."""
+    result = response.get("result")
+    name = response.get("name") or ""
+    if result == "ignored":
+        if response.get("reason") == "not_a_kroger_product_link":
+            return "⊘ Ignored: not a Kroger product link"
+        return "⊘ Ignored: aim at the barcode"
+    if result == "in_cart":
+        details = " ".join(p for p in (name, response.get("size")) if p)
+        if response.get("aisle"):
+            details += f" · {response['aisle']}"
+        label = "In cart (recorded)" if response.get("already_in_cart") else "In cart"
+        if response.get("pushed") is False and not response.get("already_in_cart"):
+            label = "Cart push pending"
+        return f"✓ {label}: {details}"
+    if result == "waiting":
+        return f"⏳ Waiting on stock: {name}"
+    if result == "unmatched":
+        return f"? Unknown code {response.get('upc') or name}"
+    if result == "duplicate":
+        return f"↺ Already on list (qty {response.get('quantity')}): {name}"
+    if result == "needs_review":
+        return f"• Needs review: {name}"
+    return None
 
 
 def monotonic() -> float:
@@ -254,12 +286,13 @@ class KrogerRestockCoordinator(DataUpdateCoordinator[RestockData]):
 
     async def async_notify(
         self,
-        title: str,
+        title: str | None,
         message: str,
         actions: list[dict[str, str]] | None = None,
+        data: dict[str, Any] | None = None,
     ) -> None:
         """Send a notification to the configured targets."""
-        await self._async_notify(title, message, actions)
+        await self._async_notify(title, message, actions, data)
 
     def in_cart_items(self, before: datetime | None = None) -> list[ListItem]:
         """In-cart items fully pushed (optionally pushed before ``before``)."""
@@ -433,6 +466,11 @@ class KrogerRestockCoordinator(DataUpdateCoordinator[RestockData]):
         return int(
             entry_option(self.config_entry, CONF_LEAD_TIME_DAYS, DEFAULT_LEAD_TIME_DAYS)
         )
+
+    @property
+    def notify_scans(self) -> bool:
+        """Send a short push for every scan (off by default)."""
+        return bool(entry_option(self.config_entry, CONF_NOTIFY_SCANS, False))
 
     @property
     def notify_targets(self) -> list[str]:
@@ -804,18 +842,54 @@ class KrogerRestockCoordinator(DataUpdateCoordinator[RestockData]):
 
     async def async_scan(
         self,
-        code: str,
+        code: str | None = None,
         quantity: int = 1,
         source: ItemSource = ItemSource.SCAN,
+        *,
         already_in_cart: bool = False,
+        product_id: str | None = None,
+        url: str | None = None,
     ) -> dict[str, Any]:
-        """Handle a scanned barcode."""
-        normalized = normalize_barcode(code)
+        """Handle a scanned barcode, a Kroger product ID, or a product link.
+
+        A product ID (given directly or taken from a kroger.com link) is
+        looked up as-is, with no barcode-candidate guessing.
+        """
+        if url is None and code and "://" in code:
+            # A URL in the barcode field: usually a scanned QR code, but it
+            # may be a shared Kroger product link.
+            link = product_id_from_text(code)
+            if link.product_id is None:
+                return await self._async_ignored(code, source)
+            product_id = link.product_id
+        elif url is not None:
+            link = product_id_from_text(url)
+            if link.product_id is None:
+                return await self._async_ignored(
+                    url, source, LINK_IGNORED_MESSAGE, "not_a_kroger_product_link"
+                )
+            product_id = link.product_id
+        if product_id is not None:
+            product_id = product_id.strip()
+            if not PRODUCT_ID.match(product_id):
+                raise ServiceValidationError(
+                    translation_domain=DOMAIN,
+                    translation_key="invalid_product_id",
+                    translation_placeholders={"product_id": product_id},
+                )
+            normalized = NormalizedBarcode(
+                raw=product_id,
+                digits=product_id,
+                kind=BarcodeKind.OTHER,
+                candidates=(product_id,),
+            )
+        else:
+            normalized = normalize_barcode(code or "")
         if normalized.kind is BarcodeKind.INVALID:
             # QR code, Data Matrix, URL or other non-product code: no item is
             # added, but tell the user (response, event, notification) so a
             # scan of the bag's QR code isn't silently lost.
-            return await self._async_ignored(code, source)
+            return await self._async_ignored(code or "", source)
         digits = normalized.digits
         now = monotonic()
         last = self._recent_scans.get(digits)
@@ -838,7 +912,9 @@ class KrogerRestockCoordinator(DataUpdateCoordinator[RestockData]):
             )
             self._changed()
         self._fire(outcome, source)
-        return self._response(outcome, already_in_cart)
+        response = self._response(outcome, already_in_cart)
+        self._notify_scan(response)
+        return response
 
     async def _recording(self, already_in_cart: bool, coro: Any) -> ProcessOutcome:
         """Run an add/scan/resolve, optionally as "already in the Kroger cart".
@@ -859,7 +935,13 @@ class KrogerRestockCoordinator(DataUpdateCoordinator[RestockData]):
             outcome.item.already_in_cart = True
         return outcome
 
-    async def _async_ignored(self, code: str, source: ItemSource) -> dict[str, Any]:
+    async def _async_ignored(
+        self,
+        code: str,
+        source: ItemSource,
+        message: str = IGNORED_MESSAGE,
+        reason: str = "not_a_product_barcode",
+    ) -> dict[str, Any]:
         _LOGGER.debug("Ignoring non-product code %r", code)
         self.hass.bus.async_fire(
             EVENT_SCANNED,
@@ -874,10 +956,18 @@ class KrogerRestockCoordinator(DataUpdateCoordinator[RestockData]):
                 "quantity": 0,
                 "upc": None,
                 "source": str(source),
-                "message": IGNORED_MESSAGE,
+                "message": message,
                 "config_entry_id": self.config_entry.entry_id,
             },
         )
+        response = {
+            "result": str(ScanResult.IGNORED),
+            "reason": reason,
+            "message": message,
+        }
+        if self.notify_scans:
+            self._notify_scan(response)
+            return response
         now = monotonic()
         if (
             self.notify_targets
@@ -886,14 +976,22 @@ class KrogerRestockCoordinator(DataUpdateCoordinator[RestockData]):
             self._last_ignored_notice = now
             self.config_entry.async_create_task(
                 self.hass,
-                self._async_notify("Scan ignored", IGNORED_MESSAGE),
+                self._async_notify("Scan ignored", message),
                 "kroger_restock ignored notice",
             )
-        return {
-            "result": str(ScanResult.IGNORED),
-            "reason": "not_a_product_barcode",
-            "message": IGNORED_MESSAGE,
-        }
+        return response
+
+    def _notify_scan(self, response: dict[str, Any]) -> None:
+        """One short, replaceable push per scan ("Notify on every scan")."""
+        if not self.notify_scans or not self.notify_targets:
+            return
+        if (text := scan_notification_text(response)) is None:
+            return
+        self.config_entry.async_create_task(
+            self.hass,
+            self._async_notify(None, text, data={"tag": SCAN_NOTIFICATION_TAG}),
+            "kroger_restock scan notice",
+        )
 
     async def _process_scan(
         self, normalized: Any, digits: str, quantity: int, source: ItemSource
@@ -965,7 +1063,9 @@ class KrogerRestockCoordinator(DataUpdateCoordinator[RestockData]):
             )
             self._changed()
         self._fire(outcome, source)
-        return self._response(outcome, already_in_cart)
+        response = self._response(outcome, already_in_cart)
+        self._notify_scan(response)
+        return response
 
     async def _process_text(
         self, name: str, quantity: int, source: ItemSource, note: str | None
@@ -1292,9 +1392,10 @@ class KrogerRestockCoordinator(DataUpdateCoordinator[RestockData]):
 
     async def _async_notify(
         self,
-        title: str,
+        title: str | None,
         message: str,
         actions: list[dict[str, str]] | None = None,
+        data: dict[str, Any] | None = None,
     ) -> None:
         """Send to each configured notify target, or a persistent notification.
 
@@ -1307,10 +1408,12 @@ class KrogerRestockCoordinator(DataUpdateCoordinator[RestockData]):
                 message += (
                     " (Use the kroger_restock.mark_cart_received action to do it.)"
                 )
+            if data and data.get("tag") == SCAN_NOTIFICATION_TAG:
+                return  # per-scan pushes only go to phones
             persistent_notification.async_create(
                 self.hass,
                 message,
-                title=title,
+                title=title or "Kroger Restock",
                 notification_id=f"{DOMAIN}_{self.config_entry.entry_id}",
             )
             return
@@ -1318,9 +1421,14 @@ class KrogerRestockCoordinator(DataUpdateCoordinator[RestockData]):
             domain, _, service = target.partition(".")
             if not service:
                 domain, service = "notify", domain
-            payload: dict[str, Any] = {"title": title, "message": message}
+            payload: dict[str, Any] = {"message": message}
+            if title:
+                payload["title"] = title
+            extra: dict[str, Any] = dict(data or {})
             if actions:
-                payload["data"] = {"actions": actions}
+                extra["actions"] = actions
+            if extra:
+                payload["data"] = extra
             try:
                 await self.hass.services.async_call(
                     domain,

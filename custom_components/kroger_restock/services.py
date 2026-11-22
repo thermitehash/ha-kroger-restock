@@ -28,11 +28,13 @@ from .const import (
     ATTR_SOURCE,
     ATTR_TARGET,
     ATTR_UPC,
+    ATTR_URL,
     CHECK_CART_ACTIONS,
     DOMAIN,
     PRINT_BOTH,
     PRINT_TARGETS,
     SERVICE_ADD_ITEM,
+    SERVICE_CART_CHECK,
     SERVICE_CHECK_CART_ITEM,
     SERVICE_CHECK_STOCK,
     SERVICE_MARK_CART_RECEIVED,
@@ -54,27 +56,36 @@ _QTY = vol.All(vol.Coerce(int), vol.Range(min=1, max=99))
 
 _ALREADY = {vol.Optional(ATTR_ALREADY_IN_CART, default=False): cv.boolean}
 
-SCAN_SCHEMA = vol.Schema(
-    {
-        **_ENTRY,
-        **_ALREADY,
-        vol.Required(ATTR_UPC): vol.All(vol.Coerce(str), cv.string),
-        vol.Optional(ATTR_QUANTITY, default=1): _QTY,
-        vol.Optional(ATTR_SOURCE, default=ItemSource.SCAN.value): vol.In(
-            [s.value for s in ItemSource]
-        ),
-    }
+SCAN_SCHEMA = vol.All(
+    vol.Schema(
+        {
+            **_ENTRY,
+            **_ALREADY,
+            vol.Optional(ATTR_UPC): vol.All(vol.Coerce(str), cv.string),
+            vol.Optional(ATTR_PRODUCT_ID): vol.All(vol.Coerce(str), cv.string),
+            vol.Optional(ATTR_URL): cv.string,
+            vol.Optional(ATTR_QUANTITY, default=1): _QTY,
+            vol.Optional(ATTR_SOURCE, default=ItemSource.SCAN.value): vol.In(
+                [s.value for s in ItemSource]
+            ),
+        }
+    ),
+    cv.has_at_least_one_key(ATTR_UPC, ATTR_PRODUCT_ID, ATTR_URL),
 )
-ADD_SCHEMA = vol.Schema(
-    {
-        **_ENTRY,
-        **_ALREADY,
-        vol.Required(ATTR_NAME): cv.string,
-        vol.Optional(ATTR_QUANTITY, default=1): _QTY,
-        vol.Optional(ATTR_SOURCE, default=ItemSource.MANUAL.value): vol.In(
-            [s.value for s in ItemSource]
-        ),
-    }
+ADD_SCHEMA = vol.All(
+    vol.Schema(
+        {
+            **_ENTRY,
+            **_ALREADY,
+            vol.Optional(ATTR_NAME): cv.string,
+            vol.Optional(ATTR_URL): cv.string,
+            vol.Optional(ATTR_QUANTITY, default=1): _QTY,
+            vol.Optional(ATTR_SOURCE, default=ItemSource.MANUAL.value): vol.In(
+                [s.value for s in ItemSource]
+            ),
+        }
+    ),
+    cv.has_at_least_one_key(ATTR_NAME, ATTR_URL),
 )
 RESOLVE_SCHEMA = vol.Schema(
     {
@@ -139,15 +150,27 @@ def _maybe(call: ServiceCall, response: dict[str, Any]) -> ServiceResponse:
 
 async def _scan_upc(call: ServiceCall) -> ServiceResponse:
     response = await _coordinator(call).async_scan(
-        call.data[ATTR_UPC],
+        call.data.get(ATTR_UPC),
         call.data[ATTR_QUANTITY],
         ItemSource(call.data[ATTR_SOURCE]),
         already_in_cart=call.data[ATTR_ALREADY_IN_CART],
+        product_id=call.data.get(ATTR_PRODUCT_ID),
+        url=call.data.get(ATTR_URL),
     )
     return _maybe(call, response)
 
 
 async def _add_item(call: ServiceCall) -> ServiceResponse:
+    if ATTR_URL in call.data:
+        # A shared kroger.com product link: look the product up directly.
+        response = await _coordinator(call).async_scan(
+            None,
+            call.data[ATTR_QUANTITY],
+            ItemSource(call.data[ATTR_SOURCE]),
+            already_in_cart=call.data[ATTR_ALREADY_IN_CART],
+            url=call.data[ATTR_URL],
+        )
+        return _maybe(call, response)
     response = await _coordinator(call).async_add_text(
         call.data[ATTR_NAME],
         call.data[ATTR_QUANTITY],
@@ -203,6 +226,12 @@ async def _check_cart_item(call: ServiceCall) -> ServiceResponse:
     return _maybe(call, result)
 
 
+async def _cart_check(call: ServiceCall) -> ServiceResponse:
+    entry = _coordinator(call).config_entry
+    summary = await entry.runtime_data.cart_check.async_send()
+    return _maybe(call, summary)
+
+
 @callback
 def async_setup_services(hass: HomeAssistant) -> None:
     """Register the integration's actions."""
@@ -215,6 +244,7 @@ def async_setup_services(hass: HomeAssistant) -> None:
         (SERVICE_CHECK_STOCK, _check_stock, SYNC_SCHEMA),
         (SERVICE_PRINT_LIST, _print_list, PRINT_SCHEMA),
         (SERVICE_CHECK_CART_ITEM, _check_cart_item, CHECK_CART_SCHEMA),
+        (SERVICE_CART_CHECK, _cart_check, SYNC_SCHEMA),
         (SERVICE_MARK_CART_RECEIVED, _mark_cart_received, MARK_RECEIVED_SCHEMA),
     ):
         hass.services.async_register(

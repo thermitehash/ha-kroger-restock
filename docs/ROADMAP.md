@@ -59,3 +59,7 @@ loses amount/unit/category.
 - **Parked:** anything beyond the manual `already_in_cart: true` recording
   added in 0.9.0 (e.g. a dedicated "Already in cart" Shortcut or button).
   The public API still can't read the cart, so recording stays manual.
+- ~~Add from a kroger.com link~~: done in 0.11.0 (`url` / `product_id` on
+  `scan_upc`, Share Sheet Shortcut).
+- ~~Weekly "does this match your cart?" prompt~~: done in 0.11.0 as the
+  pre-order cart check (never changes the cart).
