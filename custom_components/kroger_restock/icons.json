@@ -80,6 +80,9 @@
     },
     "cart_check": {
       "service": "mdi:clipboard-check-outline"
+    },
+    "set_quantity": {
+      "service": "mdi:numeric"
     }
   }
 }

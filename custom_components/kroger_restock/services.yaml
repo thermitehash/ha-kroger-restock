@@ -175,3 +175,25 @@ cart_check:
       selector:
         config_entry:
           integration: kroger_restock
+
+set_quantity:
+  fields:
+    item_id:
+      selector:
+        text:
+    name:
+      example: "Creamy Ranch"
+      selector:
+        text:
+    quantity:
+      required: true
+      example: 1
+      selector:
+        number:
+          min: 0
+          max: 99
+          mode: box
+    config_entry_id:
+      selector:
+        config_entry:
+          integration: kroger_restock

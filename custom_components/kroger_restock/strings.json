@@ -328,6 +328,12 @@
     },
     "not_check_cart": {
       "message": "That item isn't waiting for a cart check (it's {status})."
+    },
+    "item_name_not_found": {
+      "message": "No single list item matches \"{name}\". Use a more specific name or the item ID."
+    },
+    "quantity_check_cart_first": {
+      "message": "\"{name}\" may already be in your Kroger cart. Confirm it first (Settings → Repairs or check_cart_item), then change the quantity."
     }
   },
   "issues": {
@@ -548,6 +554,28 @@
       "name": "Send cart check",
       "description": "Sends the pre-order cart check now: what Home Assistant believes is in your Kroger cart, with buttons to confirm or record missing items. Returns the same list. Never changes the cart.",
       "fields": {
+        "config_entry_id": {
+          "name": "[%key:component::kroger_restock::services::scan_upc::fields::config_entry_id::name%]",
+          "description": "[%key:component::kroger_restock::services::scan_upc::fields::config_entry_id::description%]"
+        }
+      }
+    },
+    "set_quantity": {
+      "name": "Set quantity",
+      "description": "Changes how many of a list item you want. 0 removes it. Raising an item that's already in the Kroger cart pushes only the extra units; lowering it can't remove units from the Kroger cart (the API is write-only), so you're told how many to remove in the Kroger app.",
+      "fields": {
+        "item_id": {
+          "name": "Item ID",
+          "description": "The list item (from a scan response or the scanned event). Use this or the name."
+        },
+        "name": {
+          "name": "Name",
+          "description": "The item's name on the list; it must match exactly one item."
+        },
+        "quantity": {
+          "name": "Quantity",
+          "description": "The new quantity. 0 removes the item from the list."
+        },
         "config_entry_id": {
           "name": "[%key:component::kroger_restock::services::scan_upc::fields::config_entry_id::name%]",
           "description": "[%key:component::kroger_restock::services::scan_upc::fields::config_entry_id::description%]"

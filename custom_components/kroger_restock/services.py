@@ -42,6 +42,7 @@ from .const import (
     SERVICE_READD_ITEM,
     SERVICE_RESOLVE_ITEM,
     SERVICE_SCAN_UPC,
+    SERVICE_SET_QUANTITY,
     SERVICE_SYNC,
     ItemSource,
 )
@@ -115,6 +116,19 @@ CHECK_CART_SCHEMA = vol.Schema(
     }
 )
 READD_SCHEMA = vol.Schema({**_ENTRY, vol.Required(ATTR_ITEM_ID): cv.string})
+SET_QUANTITY_SCHEMA = vol.All(
+    vol.Schema(
+        {
+            **_ENTRY,
+            vol.Exclusive(ATTR_ITEM_ID, "item"): cv.string,
+            vol.Exclusive(ATTR_NAME, "item"): cv.string,
+            vol.Required(ATTR_QUANTITY): vol.All(
+                vol.Coerce(int), vol.Range(min=0, max=99)
+            ),
+        }
+    ),
+    cv.has_at_least_one_key(ATTR_ITEM_ID, ATTR_NAME),
+)
 
 
 def _coordinator(call: ServiceCall) -> KrogerRestockCoordinator:
@@ -226,6 +240,15 @@ async def _check_cart_item(call: ServiceCall) -> ServiceResponse:
     return _maybe(call, result)
 
 
+async def _set_quantity(call: ServiceCall) -> ServiceResponse:
+    coordinator = _coordinator(call)
+    item_id = (
+        call.data.get(ATTR_ITEM_ID) or coordinator.find_item(call.data[ATTR_NAME]).id
+    )
+    result = await coordinator.async_set_quantity(item_id, call.data[ATTR_QUANTITY])
+    return _maybe(call, result)
+
+
 async def _cart_check(call: ServiceCall) -> ServiceResponse:
     entry = _coordinator(call).config_entry
     summary = await entry.runtime_data.cart_check.async_send()
@@ -245,6 +268,7 @@ def async_setup_services(hass: HomeAssistant) -> None:
         (SERVICE_PRINT_LIST, _print_list, PRINT_SCHEMA),
         (SERVICE_CHECK_CART_ITEM, _check_cart_item, CHECK_CART_SCHEMA),
         (SERVICE_CART_CHECK, _cart_check, SYNC_SCHEMA),
+        (SERVICE_SET_QUANTITY, _set_quantity, SET_QUANTITY_SCHEMA),
         (SERVICE_MARK_CART_RECEIVED, _mark_cart_received, MARK_RECEIVED_SCHEMA),
     ):
         hass.services.async_register(

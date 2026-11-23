@@ -135,6 +135,9 @@ Home Assistant's list is the source of truth. Every item has a status:
 - **Scanning something already on the list** adds 1 to its quantity, and only
   the extra unit is pushed. Repeat scans of the same code within the debounce
   window (3 s by default) are ignored, so a wall scanner can't double-count.
+  Scanned one too many? Lower it with
+  [`set_quantity`](#kroger_restockset_quantity), the `×N` in the to-do list,
+  or **Undo +1** on the scan notification.
 - **Typing or saying an item** searches your store. One clear match is handled
   like a scan. Otherwise the item is marked `needs_review` with up to five
   candidates; fix it with `kroger_restock.resolve_item`.
@@ -166,9 +169,12 @@ Home Assistant's list is the source of truth. Every item has a status:
   it isn't added twice. This works with `scan_upc`, `add_item` and
   `resolve_item`; a needs-review item added this way is recorded when you
   resolve it.
-- In the to-do list, each item reads `Name (size) ×qty`. The description shows
-  its status, e.g. `In cart · Aisle 12` or `Waiting on stock since Nov 21`.
-  Editing the `×qty` part changes the quantity (and pushes the difference).
+- In the to-do list, each item reads `Name (size) ×qty` (the `×qty` appears
+  when it's more than 1). The description shows its status, e.g.
+  `In cart · Aisle 12` or `Waiting on stock since Nov 21`. Editing the name
+  to end in `×N` sets the quantity, with the same rules as `set_quantity`:
+  `×1` to go back to one, `×0` to remove the item. Leaving `×N` off keeps the
+  quantity as it is.
 
 ### How barcodes are matched
 
@@ -348,6 +354,33 @@ Prints the list. `target`: `receipt`, `pdf` or `both` (default). Returns
 Sends the [pre-order cart check](#pre-order-cart-check) now and returns
 `in_cart` (`item_id`, `name`, `quantity`), `unconfirmed` and `waiting`.
 Never changes the cart.
+
+### `kroger_restock.set_quantity`
+
+| Field | Required | Description |
+| --- | --- | --- |
+| `item_id` | this or `name` | The list item (from a scan response or event) |
+| `name` | this or `item_id` | The item's name on the list; must match exactly one active item |
+| `quantity` | yes | 0–99. **0 removes the item** from the list |
+
+What happens depends on whether the units are already in the Kroger cart:
+
+| Item | Raise | Lower |
+| --- | --- | --- |
+| Not pushed yet (waiting, held, needs review, …) | Just the number | Just the number |
+| In the cart | Pushes only the extra units | Lowers the Home Assistant record and warns *"Remove N from the Kroger app cart: …"* (response `warning`, plus a notification). Kroger's API can't remove from the cart |
+
+Items waiting for a cart check (Repairs) must be confirmed first. The
+response has `result` (`updated` or `removed`), `previous_quantity`,
+`quantity`, `pushed` (units pushed now) and `kroger_cart_remove`.
+
+```yaml
+action: kroger_restock.set_quantity
+data:
+  name: Creamy Ranch
+  quantity: 1
+response_variable: result
+```
 
 ## Events
 
@@ -570,10 +603,10 @@ Scan a barcode with your iPhone camera and add it straight to the list.
      Perform Action hands the action's response back to the Shortcut
      (verified live with the iOS app).
 4. Add **Get Dictionary Value** actions on the Perform Action output for
-   `result`, `name`, `aisle` and `message`, then **Show Notification** (or
-   **Show Result**) with them, e.g. *"in_cart: Coca-Cola Classic Soda
-   (Aisle 7)"*. Inserting the whole output shows the raw JSON, which also
-   works.
+   `result`, `name`, `aisle` and `message`, then **Show Notification** with
+   **title** = `result` and **body** = `name · aisle` (e.g. title *in_cart*,
+   body *Coca-Cola Classic Soda · Aisle 7*). For `ignored`, show `message`.
+   Inserting the whole output shows the raw JSON, which also works.
 5. Make it one tap away:
    - **Action button** (iPhone 15 Pro and later): Settings → Action Button →
      Shortcut → **Grocery scan**.
@@ -604,11 +637,21 @@ Add something you found on kroger.com or in the Kroger app without scanning:
 
 1. New shortcut named **Add to Kroger list**. In its details (ⓘ), turn on
    **Show in Share Sheet** and set it to receive **URLs** and **Text**.
-2. Add **Perform Action**, action `kroger_restock.scan_upc`, data:
+2. Add **Get URLs from Input** (input: **Shortcut Input**). The Kroger app
+   shares text with the link in it; this pulls the link out. (The integration
+   also finds a link inside text, so passing Shortcut Input directly works
+   too.)
+3. Add **Perform Action**, action `kroger_restock.scan_upc`, data:
    ```json
-   {"url": "[Shortcut Input]", "source": "shortcut"}
+   {"url": "<URLs variable>", "source": "shortcut"}
    ```
-   with the **Shortcut Input** variable inside the quotes.
+   with the **URLs** variable inside the quotes.
+4. Optional: the same **Get Dictionary Value** + **Show Notification** steps
+   as the scan Shortcut.
+
+Verified live with the Kroger iOS app. Sharing something already on the
+list gives `result: duplicate` and adds 1; fix with `set_quantity` or the
+to-do `×N` if that wasn't intended.
 
 Then on a product page tap **Share → Add to Kroger list**. A link that
 isn't a Kroger product page is ignored.
@@ -632,6 +675,11 @@ notification targets:
 
 They share one notification tag, so rapid scans replace each other instead
 of piling up. With no notification targets set, nothing is sent.
+
+The "Already on list" push has an **Undo +1** button (Undo +N for a larger
+quantity). It sets the quantity back; if those units were already pushed,
+you get the "Remove N from the Kroger app cart" reminder. Tapping it after
+the quantity changed again does nothing.
 
 ## Blueprint and examples
 
@@ -764,7 +812,9 @@ These come from Kroger's public API:
 | Kroger store-brand items | **Verified live** (v0.11.0: store-brand barcode scanned from iPhone matched, `in_cart`, aisle returned) |
 | QR code scanned by mistake | **Verified live** (`ignored` with the message, nothing added) |
 | PDF print over IPP | IPP printer configured (Nov 2026); printing not yet tested live |
-| Add by product link / `product_id`, Notify on every scan, cart check | New in v0.11.0; tested in CI, not yet live |
+| Share Sheet Shortcut from the Kroger iOS app (`url`) | **Verified live** (v0.11.0: Get URLs from Input → `scan_upc` matched the product; name and aisle in the response) |
+| `product_id`, Notify on every scan, cart check | New in v0.11.0; tested in CI, not yet live |
+| `set_quantity`, to-do `×N` lowering, Undo +1 | New in v0.12.0; tested in CI, not yet live |
 | Shortcut Perform Action returning response data | **Verified live** (HA iOS app: the `scan_upc` response JSON reached the Shortcut) |
 | Whether the cart accepts an out-of-stock UPC | Unknown (`tests/test_live_cart.py`, run locally). The integration never pushes out-of-stock items either way |
 | Refresh-token lifetime | Unknown |

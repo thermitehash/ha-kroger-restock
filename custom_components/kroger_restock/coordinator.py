@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any
 
 from homeassistant.components import persistent_notification
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
+from homeassistant.core import CALLBACK_TYPE, Event, HomeAssistant, callback
 from homeassistant.exceptions import (
     ConfigEntryAuthFailed,
     HomeAssistantError,
@@ -153,6 +153,7 @@ class ProcessOutcome:
     item: ListItem
     pushed: bool = False
     error: str | None = None
+    added: int = 0  # units a duplicate scan added to an existing item
 
 
 def _tokens(text: str) -> set[str]:
@@ -356,6 +357,13 @@ class KrogerRestockCoordinator(DataUpdateCoordinator[RestockData]):
                 self.async_revalidate_store_data(),
                 "kroger_restock store revalidation",
             )
+        self._unsubs.append(
+            self.hass.bus.async_listen(
+                "mobile_app_notification_action",
+                self._handle_undo,
+                event_filter=self._undo_filter,
+            )
+        )
         interval = timedelta(hours=self.stock_check_hours)
         self._unsubs.append(
             async_track_time_interval(
@@ -823,6 +831,8 @@ class KrogerRestockCoordinator(DataUpdateCoordinator[RestockData]):
             response["candidates"] = item.candidates
         if outcome.error:
             response["error"] = outcome.error
+        if outcome.added:
+            response["added"] = outcome.added
         return response
 
     async def _bump_duplicate(self, item: ListItem, quantity: int) -> ProcessOutcome:
@@ -835,7 +845,9 @@ class KrogerRestockCoordinator(DataUpdateCoordinator[RestockData]):
         if item.status == ItemStatus.IN_CART:
             # Push only the extra units; already-pushed units are never resent.
             error = await self._push([item])
-        return ProcessOutcome(ScanResult.DUPLICATE, item, pushed=False, error=error)
+        return ProcessOutcome(
+            ScanResult.DUPLICATE, item, pushed=False, error=error, added=quantity
+        )
 
     # ------------------------------------------------------------------
     # Public operations
@@ -987,9 +999,23 @@ class KrogerRestockCoordinator(DataUpdateCoordinator[RestockData]):
             return
         if (text := scan_notification_text(response)) is None:
             return
+        actions = None
+        if response.get("result") == "duplicate" and response.get("added"):
+            added = response["added"]
+            actions = [
+                {
+                    "action": (
+                        f"{self._undo_prefix}{response['item_id']}"
+                        f"_{response['quantity']}_{added}"
+                    ),
+                    "title": f"Undo +{added}",
+                }
+            ]
         self.config_entry.async_create_task(
             self.hass,
-            self._async_notify(None, text, data={"tag": SCAN_NOTIFICATION_TAG}),
+            self._async_notify(
+                None, text, actions, data={"tag": SCAN_NOTIFICATION_TAG}
+            ),
             "kroger_restock scan notice",
         )
 
@@ -1216,25 +1242,137 @@ class KrogerRestockCoordinator(DataUpdateCoordinator[RestockData]):
     async def async_edit(
         self, item_id: str, summary: str | None, note: str | None
     ) -> None:
-        """Apply a rename/quantity/note edit from the to-do UI."""
+        """Apply a rename/quantity/note edit from the to-do UI.
+
+        A trailing ``×N`` in the summary sets the quantity (same rules as
+        ``set_quantity``; ``×0`` removes the item). No ``×N`` leaves it as is.
+        """
         async with self._lock:
             item = self.get_item(item_id)
+            quantity: int | None = None
             if summary is not None:
                 text = summary.strip()
                 if match := _QTY_SUFFIX.search(text):
-                    item.quantity = max(1, int(match.group(1)))
+                    quantity = int(match.group(1))
                     text = text[: match.start()].strip()
                 if item.size and text.endswith(f"({item.size})"):
                     text = text[: -len(f"({item.size})")].strip()
                 if text and text != item.name:
                     item.name = text
             item.note = note or None
-            if (
+            if quantity is not None and quantity != item.quantity:
+                await self._set_quantity(item, quantity)
+            elif (
                 item.status == ItemStatus.IN_CART
                 and item.quantity > item.pushed_quantity
             ):
                 await self._push([item])
             self._changed()
+
+    def find_item(self, name: str) -> ListItem:
+        """Return the one active item called ``name`` (exact, else a clear match)."""
+        active = self.active_items
+        wanted = name.strip().casefold()
+        exact = [i for i in active if i.name.casefold() == wanted]
+        if len(exact) == 1:
+            return exact[0]
+        if not exact and (item := match_item(name, active)) is not None:
+            return item
+        raise ServiceValidationError(
+            translation_domain=DOMAIN,
+            translation_key="item_name_not_found",
+            translation_placeholders={"name": name},
+        )
+
+    async def async_set_quantity(self, item_id: str, quantity: int) -> dict[str, Any]:
+        """Set an item's quantity; 0 removes it. See ``_set_quantity``."""
+        async with self._lock:
+            response = await self._set_quantity(self.get_item(item_id), quantity)
+            self._changed()
+        return response
+
+    async def _set_quantity(self, item: ListItem, quantity: int) -> dict[str, Any]:
+        """Change the quantity (lock held).
+
+        Not pushed yet: just the number. Already pushed: raising pushes only
+        the extra units; lowering can't take units out of the Kroger cart (the
+        API is write-only), so the record is lowered and the user is told how
+        many to remove in the Kroger app.
+        """
+        if item.status in (ItemStatus.PUSHING, ItemStatus.CHECK_CART):
+            raise ServiceValidationError(
+                translation_domain=DOMAIN,
+                translation_key="quantity_check_cart_first",
+                translation_placeholders={"name": item.name},
+            )
+        previous = item.quantity
+        in_cart = item.pushed_quantity if item.status == ItemStatus.IN_CART else 0
+        to_remove = max(0, in_cart - quantity)
+        pushed_units = 0
+        error = None
+        if quantity <= 0:
+            self.data.items = [i for i in self.data.items if i.id != item.id]
+            result = "removed"
+        else:
+            item.quantity = quantity
+            if to_remove:
+                # Assume the user takes them out in the Kroger app.
+                item.pushed_quantity = quantity
+            if item.status == ItemStatus.IN_CART and quantity > item.pushed_quantity:
+                before = item.pushed_quantity
+                error = await self._push([item])
+                pushed_units = item.pushed_quantity - before
+            result = "updated"
+        response: dict[str, Any] = {
+            "result": result,
+            "item_id": item.id,
+            "name": item.name,
+            "status": "removed" if result == "removed" else str(item.status),
+            "previous_quantity": previous,
+            "quantity": max(0, quantity),
+            "pushed": pushed_units,
+            "kroger_cart_remove": to_remove,
+        }
+        if error:
+            response["error"] = error
+        if to_remove:
+            warning = (
+                f"Remove {to_remove} from the Kroger app cart: {item.name}. "
+                "Kroger's API can add to the cart but can't remove from it."
+            )
+            response["warning"] = warning
+            self.config_entry.async_create_task(
+                self.hass,
+                self._async_notify("Kroger cart", warning),
+                "kroger_restock quantity warning",
+            )
+        return response
+
+    @property
+    def _undo_prefix(self) -> str:
+        return f"KROGER_RESTOCK_UNDO_{self.config_entry.entry_id}_"
+
+    @callback
+    def _undo_filter(self, event_data: dict[str, Any]) -> bool:
+        return str(event_data.get("action", "")).startswith(self._undo_prefix)
+
+    async def _handle_undo(self, event: Event) -> None:
+        """Handle "Undo +N" on a duplicate-scan notification."""
+        rest = str(event.data["action"])[len(self._undo_prefix) :]
+        try:
+            item_id, quantity, added = rest.rsplit("_", 2)
+            expected, added_units = int(quantity), int(added)
+        except ValueError:
+            return
+        item = self._item_or_none(item_id)
+        if item is None or item.quantity != expected:
+            # Already undone, edited since, or removed: don't guess.
+            _LOGGER.debug("Undo for %s skipped: quantity changed", item_id)
+            return
+        try:
+            await self.async_set_quantity(item_id, expected - added_units)
+        except ServiceValidationError as err:
+            _LOGGER.warning("Could not undo: %s", err)
 
     async def async_delete(self, item_ids: list[str]) -> None:
         """Remove items from the list (and our records) for good."""

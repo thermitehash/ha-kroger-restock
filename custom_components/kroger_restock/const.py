@@ -85,6 +85,7 @@ SERVICE_PRINT_LIST: Final = "print_list"
 SERVICE_MARK_CART_RECEIVED: Final = "mark_cart_received"
 SERVICE_CHECK_CART_ITEM: Final = "check_cart_item"
 SERVICE_CART_CHECK: Final = "cart_check"
+SERVICE_SET_QUANTITY: Final = "set_quantity"
 
 PRINT_RECEIPT: Final = "receipt"
 PRINT_PDF: Final = "pdf"
