@@ -5,16 +5,16 @@
     "imap"
   ],
   "codeowners": [
-    "@thrivestorm2"
+    "@thermitehash"
   ],
   "config_flow": true,
   "dependencies": [
     "application_credentials"
   ],
-  "documentation": "https://github.com/thrivestorm2/ha-kroger-restock",
+  "documentation": "https://github.com/thermitehash/ha-kroger-restock",
   "integration_type": "service",
   "iot_class": "cloud_polling",
-  "issue_tracker": "https://github.com/thrivestorm2/ha-kroger-restock/issues",
+  "issue_tracker": "https://github.com/thermitehash/ha-kroger-restock/issues",
   "requirements": [
     "fpdf2==2.9.0"
   ],

@@ -8,7 +8,7 @@ blueprint:
     Not affiliated with Kroger.
   domain: automation
   author: Kroger Restock contributors
-  source_url: https://github.com/thrivestorm2/ha-kroger-restock/blob/main/blueprints/automation/kroger_restock/arrive_at_store.yaml
+  source_url: https://github.com/thermitehash/ha-kroger-restock/blob/main/blueprints/automation/kroger_restock/arrive_at_store.yaml
   homeassistant:
     min_version: "2026.11.0"
   input:

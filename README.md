@@ -75,7 +75,7 @@ you've disabled the `my` integration, use
 ## 2. Install through HACS
 
 1. In Home Assistant, open **HACS → ⋮ → Custom repositories**.
-2. Add `https://github.com/thrivestorm2/ha-kroger-restock` with type
+2. Add `https://github.com/thermitehash/ha-kroger-restock` with type
    **Integration**.
 3. Find **Kroger Restock** in HACS, download it, and restart Home Assistant.
 
@@ -690,11 +690,11 @@ When a chosen person enters a chosen zone (draw one around your store under
 with the in-cart, waiting and needs-review counts and a link that opens the
 list.
 
-[![Open your Home Assistant instance and show the blueprint import dialog with a specific blueprint pre-filled.](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2Fthrivestorm2%2Fha-kroger-restock%2Fblob%2Fmain%2Fblueprints%2Fautomation%2Fkroger_restock%2Farrive_at_store.yaml)
+[![Open your Home Assistant instance and show the blueprint import dialog with a specific blueprint pre-filled.](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2Fthermitehash%2Fha-kroger-restock%2Fblob%2Fmain%2Fblueprints%2Fautomation%2Fkroger_restock%2Farrive_at_store.yaml)
 
 Or import it manually: **Settings → Automations & scenes → Blueprints →
 Import blueprint**, and paste
-`https://github.com/thrivestorm2/ha-kroger-restock/blob/main/blueprints/automation/kroger_restock/arrive_at_store.yaml`.
+`https://github.com/thermitehash/ha-kroger-restock/blob/main/blueprints/automation/kroger_restock/arrive_at_store.yaml`.
 
 ### ESPHome wall scanner
 
