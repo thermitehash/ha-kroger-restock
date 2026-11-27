@@ -638,6 +638,12 @@ from the card are recorded with source `card`.
 **Text field:** type a barcode, an item name, or paste a product link; it
 sends `scan_upc` or `add_item` as appropriate.
 
+**Fix button:** next to Scan, with a count of every item that needs a
+product picked (needs review or not found), not only recent ones. Tap it to
+go through them one by one in the pick pop-up (*1 of 3*): pick a match,
+**Skip** to leave one for later, or **Done** to stop. It's greyed out when
+nothing needs fixing.
+
 **Recent list:** the last items that landed on the list (scanned, typed,
 shared or spoken), newest first. Scanning something already on the list
 moves it to the top. QR codes and other ignored scans aren't listed; the
@@ -660,7 +666,9 @@ state is the newest item and its `items` attribute lists the last 25 (name,
 size, quantity, status, `status_text`, aisle, result, `at`, `added`,
 `can_undo`, `item_id`, and for items that need review `candidates`: up to 5
 closest matches with `product_id`, name, brand, size, price, aisle,
-`image_url` and `in_stock`). The list isn't stored in history. A plain Markdown
+`image_url` and `in_stock`). `needs_fix` lists every item that needs a
+product picked, oldest first, in the same shape, and `needs_fix_count`
+counts them. The list isn't stored in history. A plain Markdown
 card can show it too:
 
 ```yaml
@@ -917,6 +925,7 @@ These come from Kroger's public API:
 | Card using the Home Assistant app's own scanner | Not yet tested |
 | Card appears in Add card → By card (real Home Assistant frontend) | **Verified** (v0.13.1, Home Assistant 2026.10 in CI-like setup) |
 | Fix pop-up: pick from 5 matches, search, remove | New in v0.14.0; unit tests plus Chromium check; not yet live |
+| Fix button with count, greyed when nothing to fix | New in v0.15.0; unit tests plus Chromium check; not yet live |
 | Shortcut Perform Action returning response data | **Verified live** (HA iOS app: the `scan_upc` response JSON reached the Shortcut) |
 | Whether the cart accepts an out-of-stock UPC | Unknown (`tests/test_live_cart.py`, run locally). The integration never pushes out-of-stock items either way |
 | Refresh-token lifetime | Unknown |

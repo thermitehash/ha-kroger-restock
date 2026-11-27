@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Any
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
@@ -23,6 +24,7 @@ from .coordinator import KrogerRestockCoordinator
 from .entity import KrogerRestockEntity
 from .order_email import OrderStatus
 from .orders import current_order
+from .store import ListItem
 from .todo import item_summary, status_line
 
 PARALLEL_UPDATES = 0
@@ -165,7 +167,9 @@ class KrogerRecentSensor(KrogerRestockEntity, SensorEntity):
     _attr_translation_key = "recent"
     _attr_icon = "mdi:barcode-scan"
     # The list changes with every scan; keep it out of the history database.
-    _unrecorded_attributes = frozenset({"items", "config_entry_id", "todo_entity_id"})
+    _unrecorded_attributes = frozenset(
+        {"items", "needs_fix", "needs_fix_count", "config_entry_id", "todo_entity_id"}
+    )
 
     def __init__(self, coordinator: KrogerRestockCoordinator) -> None:
         """Initialize."""
@@ -181,33 +185,21 @@ class KrogerRecentSensor(KrogerRestockEntity, SensorEntity):
 
     @property
     def extra_state_attributes(self) -> dict[str, object]:
-        """The recent items, newest first, with what the card needs."""
+        """The recent items, newest first, plus everything that needs a fix."""
         coordinator = self.coordinator
         push_date = coordinator.next_push_date()
         items = []
         for entry, item in coordinator.recent_items():
+            row = _card_row(item, push_date)
             added = int(entry.get("added") or 0)
-            items.append(
+            row.update(
                 {
-                    "item_id": item.id,
-                    "name": item.name,
-                    "brand": item.brand,
-                    "size": item.size,
-                    "quantity": item.quantity,
-                    "status": str(item.status),
-                    "status_text": status_line(item, push_date),
-                    "aisle": item.aisle_label,
-                    "image_url": item.image_url,
                     "result": entry.get("result"),
                     "source": entry.get("source"),
                     "at": entry.get("at"),
                     "added": added,
                     # "Undo +N" is offered while the quantity is unchanged
                     # since the duplicate scan.
-                    # Possible matches for the card's Fix pop-up.
-                    "candidates": list(item.candidates)
-                    if item.status in (ItemStatus.NEEDS_REVIEW, ItemStatus.UNMATCHED)
-                    else [],
                     "can_undo": bool(
                         added
                         and entry.get("result") == "duplicate"
@@ -216,11 +208,41 @@ class KrogerRecentSensor(KrogerRestockEntity, SensorEntity):
                     ),
                 }
             )
+            items.append(row)
+        # Every item waiting for the user to pick a product, oldest first,
+        # not only recent ones: the card's Fix button counts and walks these.
+        needs_fix = [
+            {**_card_row(item, push_date), "at": item.added_at.isoformat()}
+            for item in coordinator.items
+            if item.status in FIX_STATUSES
+        ]
         todo = er.async_get(self.hass).async_get_entity_id(
             "todo", DOMAIN, f"{coordinator.config_entry.entry_id}_todo"
         )
         return {
             "items": items,
+            "needs_fix": needs_fix,
+            "needs_fix_count": len(needs_fix),
             "config_entry_id": coordinator.config_entry.entry_id,
             "todo_entity_id": todo,
         }
+
+
+FIX_STATUSES = (ItemStatus.NEEDS_REVIEW, ItemStatus.UNMATCHED)
+
+
+def _card_row(item: ListItem, push_date: Any) -> dict[str, object]:
+    """One list item as the scanner card shows it."""
+    return {
+        "item_id": item.id,
+        "name": item.name,
+        "brand": item.brand,
+        "size": item.size,
+        "quantity": item.quantity,
+        "status": str(item.status),
+        "status_text": status_line(item, push_date),
+        "aisle": item.aisle_label,
+        "image_url": item.image_url,
+        # Possible matches for the card's Fix pop-up.
+        "candidates": list(item.candidates) if item.status in FIX_STATUSES else [],
+    }

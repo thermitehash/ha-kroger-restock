@@ -127,3 +127,47 @@ async def test_picking_a_candidate_resolves_and_pushes(
     assert fake_api.cart_lines == [("0001111041700", 2)]
     await hass.async_block_till_done()
     assert hass.states.get(SENSOR).attributes["items"][0]["candidates"] == []
+
+
+async def test_needs_fix_lists_every_item_to_fix_oldest_first(
+    hass: HomeAssistant, setup_integration: MockConfigEntry, fake_api: FakeKrogerApi
+) -> None:
+    for p in milks():
+        fake_api.add(p)
+    fake_api.search_results["milk"] = milks()
+    fake_api.add(make_product("0004900002891", "Coca-Cola"))
+    await hass.async_block_till_done()
+    attrs = hass.states.get(SENSOR).attributes
+    assert (attrs["needs_fix"], attrs["needs_fix_count"]) == ([], 0)
+
+    milk = await call(hass, "add_item", name="milk")
+    unknown = await call(hass, "add_item", name="unobtainium")
+    # Push both out of the recent list: needs_fix still has them.
+    for n in range(30):
+        fake_api.search_results[f"thing {n}"] = []
+        await call(hass, "add_item", name=f"thing {n}")
+    await hass.async_block_till_done()
+    attrs = hass.states.get(SENSOR).attributes
+    recent_ids = {i["item_id"] for i in attrs["items"]}
+    assert milk["item_id"] not in recent_ids
+    assert attrs["needs_fix_count"] == 32
+    first, second = attrs["needs_fix"][:2]
+    assert (first["item_id"], second["item_id"]) == (
+        milk["item_id"],
+        unknown["item_id"],
+    )
+    assert len(first["candidates"]) == 5
+    assert first["status"] == "needs_review"
+    assert second["status"] == "unmatched"
+    assert first["at"]
+
+    await call(
+        hass,
+        "resolve_item",
+        item_id=milk["item_id"],
+        product_id=first["candidates"][0]["product_id"],
+    )
+    await hass.async_block_till_done()
+    attrs = hass.states.get(SENSOR).attributes
+    assert attrs["needs_fix_count"] == 31
+    assert all(i["item_id"] != milk["item_id"] for i in attrs["needs_fix"])

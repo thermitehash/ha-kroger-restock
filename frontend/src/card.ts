@@ -158,6 +158,12 @@ export class KrogerRestockCard extends LitElement {
     return Array.isArray(items) ? items : [];
   }
 
+  /** Every item waiting for a product pick, oldest first. */
+  get needsFix(): RecentItem[] {
+    const items = this.stateObj?.attributes?.needs_fix;
+    return Array.isArray(items) ? items : [];
+  }
+
   get entryId(): string | undefined {
     return this.stateObj?.attributes?.config_entry_id;
   }
@@ -338,15 +344,41 @@ export class KrogerRestockCard extends LitElement {
     return this.setQuantity(item, item.quantity - (item.added ?? 1));
   }
 
-  /** Open the "Pick the right product" pop-up for an item that needs review. */
-  openFix(item: RecentItem): void {
+  /** Open the "Pick the right product" pop-up for one item. */
+  openFix(item: RecentItem, progress?: { index: number; total: number }): RestockFixDialog {
     document.querySelector("kroger-restock-fix")?.remove();
     const dialog = document.createElement("kroger-restock-fix") as RestockFixDialog;
     dialog.item = item;
+    dialog.progress = progress;
     dialog.callService = (service, data) => this.callService(service, data);
     dialog.onDone = (response, kind) =>
       this.show(kind === "remove" ? quantityLine(response) : resultLine(response));
     document.body.appendChild(dialog);
+    return dialog;
+  }
+
+  /** "Fix" button: walk every item that needs a product pick, one by one. */
+  fixAll(): void {
+    const queue = this.needsFix.map((i) => i.item_id);
+    const total = queue.length;
+    let index = 0;
+    const next = () => {
+      const current = new Map(this.needsFix.map((i) => [i.item_id, i]));
+      while (queue.length && !current.has(queue[0])) {
+        queue.shift(); // fixed elsewhere meanwhile
+        index += 1;
+      }
+      const id = queue.shift();
+      if (id === undefined) return;
+      index += 1;
+      const dialog = this.openFix(current.get(id)!, { index, total });
+      dialog.onDone = (response, kind) => {
+        this.show(kind === "remove" ? quantityLine(response) : resultLine(response));
+        next();
+      };
+      dialog.onSkip = next;
+    };
+    next();
   }
 
   // ------------------------------------------------------------------
@@ -371,6 +403,7 @@ export class KrogerRestockCard extends LitElement {
                 <ha-icon icon="mdi:barcode-scan"></ha-icon><span>Scan</span>
               </button>`
             : nothing}
+          ${this.renderFixButton()}
           ${config.shortcut
             ? html`<a
                 class="scan secondary"
@@ -416,6 +449,21 @@ export class KrogerRestockCard extends LitElement {
               </ul>`}
       </ha-card>
     `;
+  }
+
+  private renderFixButton() {
+    const count = this.needsFix.length;
+    return html`<button
+      class="fixall"
+      @click=${this.fixAll}
+      ?disabled=${count === 0}
+      aria-label=${count ? `Fix ${count} item${count === 1 ? "" : "s"} that need a product picked` : "Nothing to fix"}
+      title=${count ? "Pick the right product for items that need review" : "Nothing needs fixing"}
+    >
+      <ha-icon icon="mdi:auto-fix"></ha-icon><span>Fix</span>${count
+        ? html`<span class="badge">${count > 99 ? "99+" : count}</span>`
+        : nothing}
+    </button>`;
   }
 
   private renderRow(item: RecentItem) {
@@ -502,6 +550,36 @@ export class KrogerRestockCard extends LitElement {
     }
     .scan:disabled {
       opacity: 0.6;
+    }
+    .fixall {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      min-height: 44px;
+      padding: 0 14px;
+      border-radius: 22px;
+      border: 1px solid var(--warning-color, #ffa600);
+      background: transparent;
+      color: var(--warning-color, #ffa600);
+      font-weight: 500;
+      cursor: pointer;
+    }
+    .fixall .badge {
+      min-width: 22px;
+      height: 22px;
+      padding: 0 6px;
+      box-sizing: border-box;
+      border-radius: 11px;
+      background: var(--warning-color, #ffa600);
+      color: #fff;
+      font-size: 13px;
+      line-height: 22px;
+      text-align: center;
+    }
+    .fixall:disabled {
+      border-color: var(--divider-color);
+      color: var(--disabled-text-color, #bdbdbd);
+      cursor: default;
     }
     form.add {
       flex: 1 1 200px;

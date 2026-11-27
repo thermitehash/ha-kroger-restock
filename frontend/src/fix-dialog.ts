@@ -47,7 +47,11 @@ export class RestockFixDialog extends LitElement {
 
   item!: FixItem;
   callService!: CallService;
+  /** Walking several items ("Fix" button): position and a Skip button. */
+  progress?: { index: number; total: number };
   onDone?: (response: ScanResponse, kind: "resolve" | "remove") => void;
+  onSkip?: () => void;
+  /** The user dismissed the pop-up (Cancel, close button, backdrop, Escape). */
   onClose?: () => void;
 
   results: Candidate[] = [];
@@ -86,6 +90,16 @@ export class RestockFixDialog extends LitElement {
     this.onClose?.();
   }
 
+  /** Leave quietly after a pick or remove (onDone decides what's next). */
+  private finish(): void {
+    this.remove();
+  }
+
+  skip(): void {
+    this.remove();
+    this.onSkip?.();
+  }
+
   async search(): Promise<void> {
     const query = this.query.trim();
     if (!query || this.busy) return;
@@ -111,8 +125,8 @@ export class RestockFixDialog extends LitElement {
         item_id: this.item.item_id,
         product_id: match.product_id,
       });
+      this.finish();
       this.onDone?.(response, "resolve");
-      this.close();
     } catch (err) {
       this.error = (err as any)?.message || String(err);
     } finally {
@@ -130,8 +144,8 @@ export class RestockFixDialog extends LitElement {
     this.busy = true;
     try {
       const response = await this.callService("set_quantity", { item_id: this.item.item_id, quantity: 0 });
+      this.finish();
       this.onDone?.(response, "remove");
-      this.close();
     } catch (err) {
       this.error = (err as any)?.message || String(err);
     } finally {
@@ -146,7 +160,11 @@ export class RestockFixDialog extends LitElement {
       <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="title">
         <header>
           <div>
-            <h2 id="title">Pick the right product</h2>
+            <h2 id="title">
+              Pick the right product${this.progress && this.progress.total > 1
+                ? html`<span class="progress">${this.progress.index} of ${this.progress.total}</span>`
+                : nothing}
+            </h2>
             <div class="for">
               for “${item.name}”${item.quantity > 1 ? html` ×${item.quantity}` : nothing}
             </div>
@@ -187,7 +205,12 @@ export class RestockFixDialog extends LitElement {
           <button class="remove ${this.confirmRemove ? "confirm" : ""}" @click=${this.removeItem} ?disabled=${this.busy}>
             ${this.confirmRemove ? "Tap again to remove" : "Remove item"}
           </button>
-          <button class="cancel" @click=${this.close}>Cancel</button>
+          <span class="right">
+            ${this.progress && this.progress.index < this.progress.total
+              ? html`<button class="skip" @click=${this.skip} ?disabled=${this.busy}>Skip</button>`
+              : nothing}
+            <button class="cancel" @click=${this.close}>${this.progress ? "Done" : "Cancel"}</button>
+          </span>
         </footer>
       </div>
     `;
@@ -412,8 +435,20 @@ export class RestockFixDialog extends LitElement {
       background: var(--error-color, #db4437);
       color: #fff;
     }
-    .cancel {
+    .cancel,
+    .skip {
       color: var(--primary-color, #03a9f4);
+    }
+    .right {
+      display: flex;
+      gap: 4px;
+    }
+    .progress {
+      margin-left: 10px;
+      font-size: 14px;
+      font-weight: 400;
+      color: var(--secondary-text-color, #727272);
+      white-space: nowrap;
     }
   `;
 }
