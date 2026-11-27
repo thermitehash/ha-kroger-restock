@@ -358,6 +358,60 @@ Returns `products`, each with `product_id`, name, brand, size, price, aisle,
 `image_url` and `in_stock`; pass a `product_id` to `resolve_item`. Changes
 nothing.
 
+### `kroger_restock.lookup_product`
+
+Looks a product up by barcode and returns what it is, **without touching the
+list or the Kroger cart**: no list item, no cart push, no events. For other
+apps (for example a pantry inventory) that need a product's name, size and
+picture from a barcode. Response only (call it with `response_variable`).
+
+| Field | Required | Description |
+| --- | --- | --- |
+| `upc` | this or `product_id` | UPC-A, UPC-E or EAN-13, as scanned |
+| `product_id` | this or `upc` | 13-digit Kroger product ID |
+
+Barcodes go through the same matching as scans (UPC-A / EAN-13 / UPC-E /
+padding, and remembered matches). Results are cached for 7 days, so repeat
+lookups are free; each new lookup counts against Kroger's daily product
+limit. PLU codes and unknown codes return `found: false` with a `reason`
+(`not_found`, `plu_code`, `not_a_product_barcode`, `invalid_product_id`,
+`rate_limited`, `auth_failed` or `api_error`); there's never a fuzzy name
+search.
+
+```yaml
+action: kroger_restock.lookup_product
+data:
+  upc: "049000028911"
+response_variable: product
+```
+
+```yaml
+found: true
+query: "049000028911"
+cached: false
+product_id: "0004900002891"
+upc: "0004900002891"        # Kroger's ID form (no check digit)
+barcode: "049000028911"     # the printed barcode, with check digit
+name: Coca-Cola Classic Soda
+brand: Coca-Cola
+size: 12 fl oz
+aisle: Aisle 7
+price: 7.99
+stock_level: HIGH
+image_url: https://www.kroger.com/product/images/xlarge/front/0004900002891
+images:                     # best front picture first, largest first
+  - {perspective: front, size: xlarge, url: https://…/xlarge/front/0004900002891}
+  - {perspective: front, size: large, url: https://…/large/front/0004900002891}
+  - {perspective: back, size: xlarge, url: https://…/xlarge/back/0004900002891}
+```
+
+### `kroger_restock.recent_received`
+
+The items marked received in the last `days` days (1-14, default 14), newest
+first, each with the same data as the
+[`kroger_restock_received`](#kroger_restock_received) event. For an app that
+was offline when the events fired. Response only.
+
 ### `kroger_restock.cart_check`
 
 Sends the [pre-order cart check](#pre-order-cart-check) now and returns
@@ -419,6 +473,32 @@ actions:
     data:
       message: "{{ trigger.event.data.name }} is out of stock; it's on the list."
 ```
+
+### `kroger_restock_received`
+
+Fired once per item when it's marked received: by `mark_cart_received`, the
+order-complete notification (or the automatic marking at pickup), or
+checking it off in the to-do list. Only items that went through the Kroger
+cart count, and the same units are never reported twice: unchecking and
+re-checking an item doesn't fire again, while a re-added item that was
+pushed again does (those are new units). Items reported missing aren't
+received and don't fire.
+
+| Key | Example |
+| --- | --- |
+| `item_id` | `3f2a…` |
+| `upc`, `product_id` | `0004900002891` (Kroger's ID form) |
+| `barcode` | `049000028911` (as scanned, or rebuilt with its check digit) |
+| `name`, `brand`, `size` | `Coca-Cola Classic Soda`, `Coca-Cola`, `12 fl oz` |
+| `image_url` | `https://…` |
+| `quantity_received` | `2` |
+| `price` | `7.99` (if known) |
+| `received_at` | ISO timestamp |
+| `order_ref` | the Kroger order number, when it came from order tracking |
+| `config_entry_id` | |
+
+Missed some? [`recent_received`](#kroger_restockrecent_received) returns the
+last 14 days.
 
 ### `kroger_restock_back_in_stock`
 

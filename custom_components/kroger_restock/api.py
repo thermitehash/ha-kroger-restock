@@ -126,6 +126,8 @@ class Product:
     stock_level: str | None = None
     aisle: Aisle | None = None
     fulfillment: dict[str, bool] = field(default_factory=dict)
+    # Every picture: [{perspective, size, url}], best front image first.
+    images: tuple[dict[str, str], ...] = ()
 
     @property
     def in_stock(self) -> bool:
@@ -169,6 +171,7 @@ class Product:
             fulfillment={
                 k: bool(v) for k, v in (item.get("fulfillment") or {}).items()
             },
+            images=all_images(data.get("images") or []),
         )
 
 
@@ -197,6 +200,45 @@ def _as_float(value: Any) -> float | None:
 
 
 _IMAGE_SIZE_ORDER = ("medium", "large", "small", "xlarge", "thumbnail")
+_LARGEST_FIRST = ("xlarge", "large", "medium", "small", "thumbnail")
+
+
+def _image_order(images: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Front first, featured/default first within each perspective."""
+    return sorted(
+        images,
+        key=lambda img: (
+            img.get("perspective") != "front",
+            not (img.get("featured") or img.get("default")),
+        ),
+    )
+
+
+def all_images(images: list[dict[str, Any]]) -> tuple[dict[str, str], ...]:
+    """Every picture as {perspective, size, url}: best front image first.
+
+    Within one perspective, sizes run largest first.
+    """
+    rank = {size: i for i, size in enumerate(_LARGEST_FIRST)}
+    result: list[dict[str, str]] = []
+    for image in _image_order(images):
+        sizes = [s for s in image.get("sizes") or [] if s.get("url")]
+        sizes.sort(key=lambda s: rank.get(str(s.get("size")), len(rank)))
+        result.extend(
+            {
+                "perspective": str(image.get("perspective") or ""),
+                "size": str(s.get("size") or ""),
+                "url": str(s["url"]),
+            }
+            for s in sizes
+        )
+    return tuple(result)
+
+
+def largest_front_image(images: tuple[dict[str, str], ...]) -> str | None:
+    """Return the largest front picture (or the best picture there is)."""
+    front = [i for i in images if i["perspective"] == "front"]
+    return (front or list(images) or [{"url": None}])[0]["url"]
 
 
 def _pick_image(images: list[dict[str, Any]]) -> str | None:

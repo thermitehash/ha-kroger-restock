@@ -20,6 +20,7 @@ from .const import (
     ATTR_ACTION,
     ATTR_ALREADY_IN_CART,
     ATTR_CONFIG_ENTRY_ID,
+    ATTR_DAYS,
     ATTR_ITEM_ID,
     ATTR_LIMIT,
     ATTR_MISSING,
@@ -35,13 +36,16 @@ from .const import (
     DOMAIN,
     PRINT_BOTH,
     PRINT_TARGETS,
+    RECEIVED_LOG_DAYS,
     SERVICE_ADD_ITEM,
     SERVICE_CART_CHECK,
     SERVICE_CHECK_CART_ITEM,
     SERVICE_CHECK_STOCK,
+    SERVICE_LOOKUP_PRODUCT,
     SERVICE_MARK_CART_RECEIVED,
     SERVICE_PRINT_LIST,
     SERVICE_READD_ITEM,
+    SERVICE_RECENT_RECEIVED,
     SERVICE_RESOLVE_ITEM,
     SERVICE_SCAN_UPC,
     SERVICE_SEARCH_PRODUCTS,
@@ -119,6 +123,24 @@ CHECK_CART_SCHEMA = vol.Schema(
     }
 )
 READD_SCHEMA = vol.Schema({**_ENTRY, vol.Required(ATTR_ITEM_ID): cv.string})
+LOOKUP_SCHEMA = vol.All(
+    vol.Schema(
+        {
+            **_ENTRY,
+            vol.Exclusive(ATTR_UPC, "code"): vol.All(vol.Coerce(str), cv.string),
+            vol.Exclusive(ATTR_PRODUCT_ID, "code"): vol.All(vol.Coerce(str), cv.string),
+        }
+    ),
+    cv.has_at_least_one_key(ATTR_UPC, ATTR_PRODUCT_ID),
+)
+RECENT_RECEIVED_SCHEMA = vol.Schema(
+    {
+        **_ENTRY,
+        vol.Optional(ATTR_DAYS, default=RECEIVED_LOG_DAYS): vol.All(
+            vol.Coerce(int), vol.Range(min=1, max=RECEIVED_LOG_DAYS)
+        ),
+    }
+)
 SEARCH_SCHEMA = vol.Schema(
     {
         **_ENTRY,
@@ -268,6 +290,16 @@ async def _search_products(call: ServiceCall) -> ServiceResponse:
     return _maybe(call, result)
 
 
+async def _lookup_product(call: ServiceCall) -> ServiceResponse:
+    return await _coordinator(call).async_lookup_product(
+        upc=call.data.get(ATTR_UPC), product_id=call.data.get(ATTR_PRODUCT_ID)
+    )
+
+
+async def _recent_received(call: ServiceCall) -> ServiceResponse:
+    return _coordinator(call).recent_received(call.data[ATTR_DAYS])
+
+
 async def _cart_check(call: ServiceCall) -> ServiceResponse:
     entry = _coordinator(call).config_entry
     summary = await entry.runtime_data.cart_check.async_send()
@@ -297,4 +329,16 @@ def async_setup_services(hass: HomeAssistant) -> None:
             handler,
             schema=schema,
             supports_response=SupportsResponse.OPTIONAL,
+        )
+    # Read-only actions that exist only for their answer.
+    for name, handler, schema in (
+        (SERVICE_LOOKUP_PRODUCT, _lookup_product, LOOKUP_SCHEMA),
+        (SERVICE_RECENT_RECEIVED, _recent_received, RECENT_RECEIVED_SCHEMA),
+    ):
+        hass.services.async_register(
+            DOMAIN,
+            name,
+            handler,
+            schema=schema,
+            supports_response=SupportsResponse.ONLY,
         )

@@ -28,6 +28,7 @@ _DATETIME_FIELDS = (
     "cart_pushed_at",
     "received_at",
     "give_up_snoozed_at",
+    "received_reported_at",
 )
 
 
@@ -68,6 +69,9 @@ class ListItem:
     already_in_cart: bool = False
     # Set when the user chose "keep waiting" on a give-up repair.
     give_up_snoozed_at: datetime | None = None
+    # Last time a kroger_restock_received event was fired for this item; units
+    # pushed before then were already reported.
+    received_reported_at: datetime | None = None
 
     @property
     def active(self) -> bool:
@@ -186,9 +190,15 @@ class RestockData:
     # {item_id, at, result, added, quantity, source}. Only things that landed
     # on the list (no ignored or debounced scans).
     recent: list[dict[str, Any]] = field(default_factory=list)
+    # lookup_product results: key -> {at, result}; kept 7 days.
+    lookup_cache: dict[str, dict[str, Any]] = field(default_factory=dict)
+    # kroger_restock_received payloads, newest last; kept 14 days.
+    received_log: list[dict[str, Any]] = field(default_factory=list)
 
 
 MAX_RECENT = 25
+MAX_LOOKUP_CACHE = 1000
+MAX_RECEIVED_LOG = 1000
 
 
 class _VersionedStore(Store[dict[str, Any]]):
@@ -204,6 +214,10 @@ class _VersionedStore(Store[dict[str, Any]]):
             # 1.2 added give_up_snoozed_at to items.
             for item in old_data.get("items", []):
                 item.setdefault("give_up_snoozed_at", None)
+        if old_major_version == 1 and old_minor_version < 7:
+            # 1.7 added the product lookup cache and the received log.
+            old_data.setdefault("lookup_cache", {})
+            old_data.setdefault("received_log", [])
         if old_major_version == 1 and old_minor_version < 6:
             # 1.6 added the recently scanned list.
             old_data.setdefault("recent", [])
@@ -248,6 +262,8 @@ class RestockStore:
             location_id=raw.get("location_id"),
             imap_baseline=raw.get("imap_baseline"),
             recent=list(raw.get("recent", [])),
+            lookup_cache=dict(raw.get("lookup_cache", {})),
+            received_log=list(raw.get("received_log", [])),
         )
 
     async def async_save(self, data: RestockData) -> None:
@@ -272,4 +288,6 @@ class RestockStore:
             "location_id": data.location_id,
             "imap_baseline": data.imap_baseline,
             "recent": list(data.recent),
+            "lookup_cache": dict(data.lookup_cache),
+            "received_log": list(data.received_log),
         }

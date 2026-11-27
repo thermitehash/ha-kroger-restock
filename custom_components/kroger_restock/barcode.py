@@ -263,3 +263,17 @@ def plu_display_name(normalized: NormalizedBarcode) -> str:
     if name is None:
         return f"Produce PLU {normalized.digits}"
     return f"Organic {name.lower()}" if normalized.organic else name
+
+
+def barcode_from_product_id(product_id: str | None) -> str | None:
+    """Rebuild the printed barcode (with check digit) from a Kroger product ID.
+
+    Kroger IDs are the barcode without its check digit, left-padded to 13:
+    UPC-A ``049000028911`` is ``0004900002891``. IDs starting ``00`` become a
+    12-digit UPC-A, others a 13-digit EAN-13.
+    """
+    if not product_id or not product_id.isdigit() or len(product_id) > 13:
+        return None
+    digits = product_id.zfill(13)
+    body = digits[2:] if digits.startswith("00") else digits[1:]
+    return f"{body}{gs1_check_digit(body)}"

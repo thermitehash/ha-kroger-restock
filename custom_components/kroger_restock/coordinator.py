@@ -31,12 +31,16 @@ from .api import (
     KrogerAuthError,
     KrogerConnectionError,
     KrogerError,
+    KrogerRateLimitError,
     Product,
+    largest_front_image,
 )
 from .barcode import (
     PRODUCT_ID_LENGTH,
     BarcodeKind,
     NormalizedBarcode,
+    barcode_from_product_id,
+    has_valid_check_digit,
     normalize_barcode,
     plu_display_name,
     plu_search_term,
@@ -63,13 +67,16 @@ from .const import (
     DEFAULT_STOCK_CHECK_HOURS,
     DOMAIN,
     EVENT_BACK_IN_STOCK,
+    EVENT_RECEIVED,
     EVENT_SCANNED,
     IGNORED_MESSAGE,
     IGNORED_NOTIFY_INTERVAL,
     LINK_IGNORED_MESSAGE,
+    LOOKUP_CACHE_DAYS,
     MAX_REVIEW_CANDIDATES,
     MISS_CACHE_SECONDS,
     PRODUCT_CACHE_SECONDS,
+    RECEIVED_LOG_DAYS,
     SCAN_NOTIFICATION_TAG,
     ItemSource,
     ItemStatus,
@@ -78,7 +85,14 @@ from .const import (
 from .links import PRODUCT_ID, product_id_from_text
 from .matching import match_item
 from .schedule import check_spacing, in_order_window, next_window_start, waited_too_long
-from .store import MAX_RECENT, ListItem, RestockData, RestockStore
+from .store import (
+    MAX_LOOKUP_CACHE,
+    MAX_RECEIVED_LOG,
+    MAX_RECENT,
+    ListItem,
+    RestockData,
+    RestockStore,
+)
 
 if TYPE_CHECKING:
     from . import KrogerConfigEntry
@@ -351,6 +365,7 @@ class KrogerRestockCoordinator(DataUpdateCoordinator[RestockData]):
         before: datetime | None = None,
         missing: list[str] | None = None,
         exclude: Iterable[str] = (),
+        order_ref: str | None = None,
     ) -> dict[str, Any]:
         """Mark in-cart items received after an order arrived.
 
@@ -378,6 +393,10 @@ class KrogerRestockCoordinator(DataUpdateCoordinator[RestockData]):
             for item in items:
                 item.status = ItemStatus.RECEIVED
                 item.received_at = now
+            # Missing items are about to go back on the list: not received.
+            self._report_received(
+                [i for i in items if i not in missing_items], order_ref
+            )
             if items:
                 self._changed()
         returned = []
@@ -391,6 +410,142 @@ class KrogerRestockCoordinator(DataUpdateCoordinator[RestockData]):
             "missing": returned,
             "unmatched": unmatched,
         }
+
+    def _report_received(self, items: list[ListItem], order_ref: str | None) -> None:
+        """Fire kroger_restock_received once per newly received batch of units.
+
+        Only items that went through the Kroger cart count, and only units
+        pushed since the last report: unchecking and re-checking an item, or
+        checking off a re-added item that was never pushed again, doesn't
+        report the same units twice.
+        """
+        now = dt_util.utcnow()
+        for item in items:
+            pushed_at = item.cart_pushed_at
+            if pushed_at is None or item.pushed_quantity <= 0:
+                continue
+            if item.received_reported_at and pushed_at <= item.received_reported_at:
+                continue
+            item.received_reported_at = now
+            payload = {
+                "item_id": item.id,
+                "upc": item.upc,
+                "barcode": item.raw_code
+                if item.raw_code
+                and len(item.raw_code) in (8, 12, 13)
+                and item.raw_code != item.product_id
+                and has_valid_check_digit(item.raw_code)
+                else barcode_from_product_id(item.product_id),
+                "product_id": item.product_id,
+                "name": item.name,
+                "brand": item.brand,
+                "size": item.size,
+                "image_url": item.image_url,
+                "quantity_received": item.pushed_quantity,
+                "price": item.price,
+                "received_at": (item.received_at or now).isoformat(),
+                "order_ref": order_ref,
+                "config_entry_id": self.config_entry.entry_id,
+            }
+            self.data.received_log = [*self.data.received_log, payload][
+                -MAX_RECEIVED_LOG:
+            ]
+            self.hass.bus.async_fire(EVENT_RECEIVED, payload)
+        self._prune_received_log()
+
+    def _prune_received_log(self) -> None:
+        cutoff = dt_util.utcnow() - timedelta(days=RECEIVED_LOG_DAYS)
+        self.data.received_log = [
+            e
+            for e in self.data.received_log
+            if (at := dt_util.parse_datetime(str(e.get("received_at"))))
+            and at >= cutoff
+        ]
+
+    def recent_received(self, days: int = RECEIVED_LOG_DAYS) -> dict[str, Any]:
+        """Received items of the last ``days`` days, newest first."""
+        days = max(1, min(days, RECEIVED_LOG_DAYS))
+        cutoff = dt_util.utcnow() - timedelta(days=days)
+        items = [
+            dict(e)
+            for e in reversed(self.data.received_log)
+            if (at := dt_util.parse_datetime(str(e.get("received_at"))))
+            and at >= cutoff
+        ]
+        return {"days": days, "items": items}
+
+    async def async_lookup_product(
+        self, upc: str | None = None, product_id: str | None = None
+    ) -> dict[str, Any]:
+        """Look a product up by barcode or ID. Read-only.
+
+        No list item, no cart call, no events. Barcodes go through the usual
+        normalization and the remembered barcode -> product mapping; results
+        are cached for 7 days. PLU codes and unknown codes return
+        ``found: false`` (never a fuzzy name search).
+        """
+        query = (product_id if product_id is not None else upc or "").strip()
+        if product_id is not None:
+            if not PRODUCT_ID.match(query):
+                return _not_found(query, "invalid_product_id")
+            key, digits, candidates = f"pid:{query}", query, (query,)
+        else:
+            normalized = normalize_barcode(query)
+            if normalized.kind is BarcodeKind.INVALID:
+                return _not_found(query, "not_a_product_barcode")
+            if normalized.is_plu:
+                return _not_found(query, "plu_code")
+            key = f"upc:{normalized.digits}"
+            digits, candidates = normalized.digits, normalized.candidates
+        now = dt_util.utcnow()
+        if cached := self.data.lookup_cache.get(key):
+            at = dt_util.parse_datetime(str(cached.get("at")))
+            if at and now - at < timedelta(days=LOOKUP_CACHE_DAYS):
+                return {**cached["result"], "query": query, "cached": True}
+        try:
+            if product_id is not None:
+                product = await self._get_product(digits)
+            else:
+                product = await self._lookup_barcode(digits, candidates)
+        except HomeAssistantError as err:
+            cause = err.__cause__
+            reason = (
+                "rate_limited"
+                if isinstance(cause, KrogerRateLimitError)
+                else "auth_failed"
+                if isinstance(cause, (KrogerAuthError, ConfigEntryAuthFailed))
+                else "api_error"
+            )
+            _LOGGER.debug("Product lookup for %s failed: %s", query, err)
+            return {**_not_found(query, reason), "error": str(err)}
+        if product is None:
+            return _not_found(query, "not_found")
+        aisle = product.aisle
+        result: dict[str, Any] = {
+            "found": True,
+            "product_id": product.product_id,
+            "upc": product.upc,
+            "barcode": barcode_from_product_id(product.product_id),
+            "name": product.description,
+            "brand": product.brand,
+            "size": product.size,
+            "aisle": locate(aisle.number, aisle.description).label if aisle else None,
+            "price": product.price,
+            "stock_level": product.stock_level,
+            "images": [dict(i) for i in product.images],
+            "image_url": largest_front_image(product.images) or product.image_url,
+        }
+        cache = {
+            k: v
+            for k, v in self.data.lookup_cache.items()
+            if (at := dt_util.parse_datetime(str(v.get("at"))))
+            and now - at < timedelta(days=LOOKUP_CACHE_DAYS)
+        }
+        cache[key] = {"at": now.isoformat(), "result": result}
+        self.data.lookup_cache = dict(list(cache.items())[-MAX_LOOKUP_CACHE:])
+        # Save quietly: no entity updates, no events.
+        self._store.async_delay_save(self.data)
+        return {**result, "query": query, "cached": False}
 
     @callback
     def async_start(self) -> None:
@@ -1294,6 +1449,7 @@ class KrogerRestockCoordinator(DataUpdateCoordinator[RestockData]):
             if item.status != ItemStatus.RECEIVED:
                 item.status = ItemStatus.RECEIVED
                 item.received_at = dt_util.utcnow()
+                self._report_received([item], None)
                 self._changed()
 
     async def async_readd(self, item_id: str) -> dict[str, Any]:
@@ -1778,3 +1934,7 @@ def candidate(product: Product) -> dict[str, Any]:
 def _candidates(products: list[Product], term: str = "") -> list[dict[str, Any]]:
     ranked = rank_products(term, products) if term else products
     return [candidate(p) for p in ranked[:MAX_REVIEW_CANDIDATES]]
+
+
+def _not_found(query: str, reason: str) -> dict[str, Any]:
+    return {"found": False, "query": query, "reason": reason}

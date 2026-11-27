@@ -1508,3 +1508,32 @@ async def test_no_check_could_read_anything_asks_about_everything(
     )
     [ask] = [c for c in calls if "picked up" in c.data["title"]]
     assert ask.data["message"].startswith("Mark the 2 in-cart items received?")
+
+
+async def test_received_event_carries_the_order_number(
+    hass: HomeAssistant,
+    tracking: MockConfigEntry,
+    imap_entry: MockConfigEntry,
+    mailbox: dict[str, str],
+    fake_api: FakeKrogerApi,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    from pytest_homeassistant_custom_component.common import async_capture_events
+
+    ids, _calls = await place_order(
+        hass, tracking, imap_entry, mailbox, fake_api, freezer, out_of_stock=(COKE,)
+    )
+    events = async_capture_events(hass, f"{DOMAIN}_received")
+    await pick_up(hass, imap_entry, mailbox)
+    order = last_order(tracking)
+    # In stock: received at pickup, with the order number.
+    assert [(e.data["item_id"], e.data["order_ref"]) for e in events] == [
+        (ids[EGGS], order.order_number)
+    ]
+    # The out-of-stock one is reported once the user says it came.
+    [ask] = [c for c in _calls if "did these come" in c.data["title"]]
+    yes = ask.data["data"]["actions"][0]["action"]
+    hass.bus.async_fire("mobile_app_notification_action", {"action": yes})
+    await hass.async_block_till_done()
+    assert [e.data["item_id"] for e in events] == [ids[EGGS], ids[COKE]]
+    assert events[1].data["order_ref"] == order.order_number

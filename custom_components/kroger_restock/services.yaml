@@ -218,3 +218,32 @@ search_products:
       selector:
         config_entry:
           integration: kroger_restock
+
+lookup_product:
+  fields:
+    upc:
+      example: "049000028911"
+      selector:
+        text:
+    product_id:
+      example: "0004900002891"
+      selector:
+        text:
+    config_entry_id:
+      selector:
+        config_entry:
+          integration: kroger_restock
+
+recent_received:
+  fields:
+    days:
+      default: 14
+      selector:
+        number:
+          min: 1
+          max: 14
+          mode: box
+    config_entry_id:
+      selector:
+        config_entry:
+          integration: kroger_restock

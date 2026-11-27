@@ -68,11 +68,12 @@ DEFAULT_LEAD_TIME_DAYS: Final = 1
 WEEKDAYS: Final = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
 
 STORAGE_VERSION: Final = 1
-STORAGE_MINOR_VERSION: Final = 6
+STORAGE_MINOR_VERSION: Final = 7
 
 EVENT_SCANNED: Final = f"{DOMAIN}_scanned"
 EVENT_BACK_IN_STOCK: Final = f"{DOMAIN}_back_in_stock"
 EVENT_ORDER_UPDATE: Final = f"{DOMAIN}_order_update"
+EVENT_RECEIVED: Final = f"{DOMAIN}_received"
 
 # Services
 SERVICE_SCAN_UPC: Final = "scan_upc"
@@ -87,6 +88,11 @@ SERVICE_CHECK_CART_ITEM: Final = "check_cart_item"
 SERVICE_CART_CHECK: Final = "cart_check"
 SERVICE_SET_QUANTITY: Final = "set_quantity"
 SERVICE_SEARCH_PRODUCTS: Final = "search_products"
+SERVICE_LOOKUP_PRODUCT: Final = "lookup_product"
+SERVICE_RECENT_RECEIVED: Final = "recent_received"
+ATTR_DAYS: Final = "days"
+LOOKUP_CACHE_DAYS: Final = 7
+RECEIVED_LOG_DAYS: Final = 14
 ATTR_QUERY: Final = "query"
 ATTR_LIMIT: Final = "limit"
 

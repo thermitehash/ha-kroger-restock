@@ -603,6 +603,38 @@
           "description": "The Kroger Restock entry to use. Only needed if you have more than one."
         }
       }
+    },
+    "lookup_product": {
+      "name": "Look up product",
+      "description": "Looks a product up by barcode or Kroger product ID and returns its name, brand, size, aisle, price, stock and pictures at your store. Read-only: adds nothing to the list or the Kroger cart and fires no events. Results are cached for 7 days. PLU codes and unknown codes return found: false.",
+      "fields": {
+        "upc": {
+          "name": "Barcode",
+          "description": "UPC-A, UPC-E or EAN-13, as scanned. Use this or the product ID."
+        },
+        "product_id": {
+          "name": "Product ID",
+          "description": "The 13-digit Kroger product ID. Use this or the barcode."
+        },
+        "config_entry_id": {
+          "name": "Config entry",
+          "description": "The Kroger Restock entry to use. Only needed if you have more than one."
+        }
+      }
+    },
+    "recent_received": {
+      "name": "Recently received",
+      "description": "Returns the items marked received in the last days (up to 14), newest first, with the same data as the kroger_restock_received event. For apps that were offline when the event fired.",
+      "fields": {
+        "days": {
+          "name": "Days",
+          "description": "How far back to look (1-14)."
+        },
+        "config_entry_id": {
+          "name": "Config entry",
+          "description": "The Kroger Restock entry to use. Only needed if you have more than one."
+        }
+      }
     }
   }
 }

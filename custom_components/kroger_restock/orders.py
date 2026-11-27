@@ -290,13 +290,15 @@ class OrderWatcher:
         )
         cutoff = (order.placed_at or order.completed_at) if order else None
         if choice == CHOICE_ALL:
-            await self.coordinator.async_mark_cart_received(before=cutoff)
+            await self.coordinator.async_mark_cart_received(
+                before=cutoff, order_ref=number or None
+            )
             return
         if choice == CHOICE_NONE:
             # None of the items the question asked about came.
             ids = [o["item_id"] for o in (order.asked if order else [])]
             result = await self.coordinator.async_mark_cart_received(
-                before=cutoff, missing=ids
+                before=cutoff, missing=ids, order_ref=number or None
             )
             await self.coordinator.async_notify(
                 "Kroger order: missing items", missing_summary(result)
@@ -311,7 +313,7 @@ class OrderWatcher:
             )
             return
         result = await self.coordinator.async_mark_cart_received(
-            before=cutoff, missing=split_names(reply)
+            before=cutoff, missing=split_names(reply), order_ref=number or None
         )
         await self.coordinator.async_notify(
             "Kroger order: missing items", missing_summary(result)
@@ -715,7 +717,7 @@ class OrderWatcher:
         order.asked = [{"item_id": i.id, "name": i.name} for i in risky]
         self.coordinator.mark_changed()
         result = await self.coordinator.async_mark_cart_received(
-            before=cutoff, exclude=[i.id for i in risky]
+            before=cutoff, exclude=[i.id for i in risky], order_ref=order.order_number
         )
         if not notify:
             return
