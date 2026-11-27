@@ -204,6 +204,10 @@ class KrogerRecentSensor(KrogerRestockEntity, SensorEntity):
                     "added": added,
                     # "Undo +N" is offered while the quantity is unchanged
                     # since the duplicate scan.
+                    # Possible matches for the card's Fix pop-up.
+                    "candidates": list(item.candidates)
+                    if item.status in (ItemStatus.NEEDS_REVIEW, ItemStatus.UNMATCHED)
+                    else [],
                     "can_undo": bool(
                         added
                         and entry.get("result") == "duplicate"

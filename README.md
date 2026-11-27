@@ -350,6 +350,14 @@ Prints the list. `target`: `receipt`, `pdf` or `both` (default). Returns
 (`path` of the saved file and whether it was `printed`). See
 [Printing](#printing).
 
+### `kroger_restock.search_products`
+
+Searches your store's catalog, closest matches first (what the card's Fix
+pop-up uses). `query` (e.g. `2% milk`), optional `limit` (1-10, default 5).
+Returns `products`, each with `product_id`, name, brand, size, price, aisle,
+`image_url` and `in_stock`; pass a `product_id` to `resolve_item`. Changes
+nothing.
+
 ### `kroger_restock.cart_check`
 
 Sends the [pre-order cart check](#pre-order-cart-check) now and returns
@@ -591,8 +599,9 @@ updates the version there after each update, so browsers don't keep an old
 copy. After an update, restart Home Assistant and reload the page (in the
 app: Settings → Companion app → Debugging → Reset frontend cache).
 
-**Add it:** edit a dashboard → **Add card** → search **Kroger Restock
-scanner**. It picks the **Recently scanned** sensor on its own.
+**Add it:** edit a dashboard → **Add card** → the **By card** tab (the
+dialog opens on *By entity*, which only searches entities) → search
+**Kroger**, and pick **Kroger Restock scanner**. It picks the **Recently scanned** sensor on its own.
 
 **YAML-mode dashboards:** resources can't be added for you there; the card
 is still loaded on every page, or add it yourself:
@@ -639,12 +648,19 @@ status and aisle, and how long ago it was added:
   is a bin: tap it, then **Remove?** to confirm. Lowering an item that's
   already in the Kroger cart shows *"Remove N from the Kroger app cart"*.
 - **Undo +1** on items you just scanned again.
-- **Fix** opens the to-do list for items that need review or weren't found.
+- **Fix** (items that need review or weren't found) opens **Pick the right
+  product**: up to 5 closest matches from your store, each with size, price,
+  aisle, picture and stock. Tap one to resolve the item: it's pushed to the
+  cart if it's in stock, and a barcode fix is remembered for the next scan.
+  Not the right ones? Search by name in the same pop-up. **Remove item** is
+  there too. (On a phone it opens as a sheet from the bottom.)
 
 **The "Recently scanned" sensor** feeds the card and works on its own: its
 state is the newest item and its `items` attribute lists the last 25 (name,
 size, quantity, status, `status_text`, aisle, result, `at`, `added`,
-`can_undo`, `item_id`). The list isn't stored in history. A plain Markdown
+`can_undo`, `item_id`, and for items that need review `candidates`: up to 5
+closest matches with `product_id`, name, brand, size, price, aisle,
+`image_url` and `in_stock`). The list isn't stored in history. A plain Markdown
 card can show it too:
 
 ```yaml
@@ -899,6 +915,8 @@ These come from Kroger's public API:
 | Restock scanner card: list, text field, row buttons | New in v0.13.0; unit tests plus a real-browser check (Chromium); not yet live |
 | Card's browser camera + built-in barcode reader | Tested in Chromium with a generated EAN-13 (fake camera); not yet on a phone |
 | Card using the Home Assistant app's own scanner | Not yet tested |
+| Card appears in Add card → By card (real Home Assistant frontend) | **Verified** (v0.13.1, Home Assistant 2026.10 in CI-like setup) |
+| Fix pop-up: pick from 5 matches, search, remove | New in v0.14.0; unit tests plus Chromium check; not yet live |
 | Shortcut Perform Action returning response data | **Verified live** (HA iOS app: the `scan_upc` response JSON reached the Shortcut) |
 | Whether the cart accepts an out-of-stock UPC | Unknown (`tests/test_live_cart.py`, run locally). The integration never pushes out-of-stock items either way |
 | Refresh-token lifetime | Unknown |

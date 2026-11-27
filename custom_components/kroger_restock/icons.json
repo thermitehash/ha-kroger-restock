@@ -83,6 +83,9 @@
     },
     "set_quantity": {
       "service": "mdi:numeric"
+    },
+    "search_products": {
+      "service": "mdi:magnify"
     }
   }
 }

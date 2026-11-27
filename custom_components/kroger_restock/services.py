@@ -21,10 +21,12 @@ from .const import (
     ATTR_ALREADY_IN_CART,
     ATTR_CONFIG_ENTRY_ID,
     ATTR_ITEM_ID,
+    ATTR_LIMIT,
     ATTR_MISSING,
     ATTR_NAME,
     ATTR_PRODUCT_ID,
     ATTR_QUANTITY,
+    ATTR_QUERY,
     ATTR_SOURCE,
     ATTR_TARGET,
     ATTR_UPC,
@@ -42,6 +44,7 @@ from .const import (
     SERVICE_READD_ITEM,
     SERVICE_RESOLVE_ITEM,
     SERVICE_SCAN_UPC,
+    SERVICE_SEARCH_PRODUCTS,
     SERVICE_SET_QUANTITY,
     SERVICE_SYNC,
     ItemSource,
@@ -116,6 +119,15 @@ CHECK_CART_SCHEMA = vol.Schema(
     }
 )
 READD_SCHEMA = vol.Schema({**_ENTRY, vol.Required(ATTR_ITEM_ID): cv.string})
+SEARCH_SCHEMA = vol.Schema(
+    {
+        **_ENTRY,
+        vol.Required(ATTR_QUERY): cv.string,
+        vol.Optional(ATTR_LIMIT, default=5): vol.All(
+            vol.Coerce(int), vol.Range(min=1, max=10)
+        ),
+    }
+)
 SET_QUANTITY_SCHEMA = vol.All(
     vol.Schema(
         {
@@ -249,6 +261,13 @@ async def _set_quantity(call: ServiceCall) -> ServiceResponse:
     return _maybe(call, result)
 
 
+async def _search_products(call: ServiceCall) -> ServiceResponse:
+    result = await _coordinator(call).async_search_products(
+        call.data[ATTR_QUERY], call.data[ATTR_LIMIT]
+    )
+    return _maybe(call, result)
+
+
 async def _cart_check(call: ServiceCall) -> ServiceResponse:
     entry = _coordinator(call).config_entry
     summary = await entry.runtime_data.cart_check.async_send()
@@ -269,6 +288,7 @@ def async_setup_services(hass: HomeAssistant) -> None:
         (SERVICE_CHECK_CART_ITEM, _check_cart_item, CHECK_CART_SCHEMA),
         (SERVICE_CART_CHECK, _cart_check, SYNC_SCHEMA),
         (SERVICE_SET_QUANTITY, _set_quantity, SET_QUANTITY_SCHEMA),
+        (SERVICE_SEARCH_PRODUCTS, _search_products, SEARCH_SCHEMA),
         (SERVICE_MARK_CART_RECEIVED, _mark_cart_received, MARK_RECEIVED_SCHEMA),
     ):
         hass.services.async_register(

@@ -24,6 +24,7 @@ from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
 
+from .aisles import locate
 from .api import (
     CartItem,
     KrogerApiClient,
@@ -1067,7 +1068,7 @@ class KrogerRestockCoordinator(DataUpdateCoordinator[RestockData]):
                 raw_code=digits,
             )
             if term := plu_search_term(normalized):
-                item.candidates = _candidates(await self._search(term))
+                item.candidates = _candidates(await self._search(term), term)
             self.data.items.append(item)
             return ProcessOutcome(ScanResult.NEEDS_REVIEW, item)
 
@@ -1152,7 +1153,7 @@ class KrogerRestockCoordinator(DataUpdateCoordinator[RestockData]):
             self.data.items.append(item)
             return await self._settle(item, product)
         item.status = ItemStatus.NEEDS_REVIEW
-        item.candidates = _candidates(matches or results)
+        item.candidates = _candidates(matches or results, name)
         self.data.items.append(item)
         return ProcessOutcome(ScanResult.NEEDS_REVIEW, item)
 
@@ -1206,6 +1207,18 @@ class KrogerRestockCoordinator(DataUpdateCoordinator[RestockData]):
                 outcome = await self._recording(record, self._settle(item, product))
             self._changed()
         return self._response(outcome, record)
+
+    async def async_search_products(
+        self, query: str, limit: int = MAX_REVIEW_CANDIDATES
+    ) -> dict[str, Any]:
+        """Search the store's catalog, closest matches first (for the Fix pop-up)."""
+        query = " ".join(query.split())
+        if not query:
+            raise ServiceValidationError(
+                translation_domain=DOMAIN, translation_key="empty_name"
+            )
+        ranked = rank_products(query, await self._search(query))
+        return {"query": query, "products": [candidate(p) for p in ranked[:limit]]}
 
     async def async_sync(self) -> dict[str, Any]:
         """Push any in-cart items whose quantity hasn't been fully pushed.
@@ -1688,14 +1701,37 @@ class KrogerRestockCoordinator(DataUpdateCoordinator[RestockData]):
         return max(checks) if checks else None
 
 
-def _candidates(products: list[Product]) -> list[dict[str, Any]]:
-    return [
-        {
-            "product_id": p.product_id,
-            "name": p.description,
-            "brand": p.brand,
-            "size": p.size,
-            "in_stock": p.in_stock,
-        }
-        for p in products[:MAX_REVIEW_CANDIDATES]
-    ]
+def rank_products(term: str, products: list[Product]) -> list[Product]:
+    """Closest matches first: most of ``term``'s words in brand + name.
+
+    Ties keep Kroger's own (relevance) order.
+    """
+    wanted = _tokens(term)
+    if not wanted:
+        return list(products)
+
+    def score(product: Product) -> float:
+        have = _tokens(f"{product.brand or ''} {product.description}")
+        return len(wanted & have) / len(wanted)
+
+    return sorted(products, key=score, reverse=True)
+
+
+def candidate(product: Product) -> dict[str, Any]:
+    """Describe one possible match for the Fix pop-up."""
+    aisle = product.aisle
+    return {
+        "product_id": product.product_id,
+        "name": product.description,
+        "brand": product.brand,
+        "size": product.size,
+        "price": product.price,
+        "image_url": product.image_url,
+        "aisle": locate(aisle.number, aisle.description).label if aisle else None,
+        "in_stock": product.in_stock,
+    }
+
+
+def _candidates(products: list[Product], term: str = "") -> list[dict[str, Any]]:
+    ranked = rank_products(term, products) if term else products
+    return [candidate(p) for p in ranked[:MAX_REVIEW_CANDIDATES]]

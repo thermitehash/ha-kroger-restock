@@ -4,6 +4,8 @@
 import { LitElement, css, html, nothing, type PropertyValues } from "lit";
 import "./camera";
 import type { RestockCameraScanner } from "./camera";
+import "./fix-dialog";
+import type { Candidate, RestockFixDialog } from "./fix-dialog";
 import { NativeScanner, externalBus, nativeScannerAvailable } from "./native-scanner";
 import {
   classifyInput,
@@ -44,6 +46,7 @@ export interface RecentItem {
   at?: string;
   added?: number;
   can_undo?: boolean;
+  candidates?: Candidate[];
 }
 
 /** Where the card's own files (the .wasm reader) are served from. */
@@ -335,11 +338,15 @@ export class KrogerRestockCard extends LitElement {
     return this.setQuantity(item, item.quantity - (item.added ?? 1));
   }
 
-  openList(): void {
-    const todo = this.stateObj?.attributes?.todo_entity_id;
-    const path = todo ? `/todo?entity_id=${encodeURIComponent(todo)}` : "/todo";
-    history.pushState(null, "", path);
-    window.dispatchEvent(new CustomEvent("location-changed", { detail: { replace: false } }));
+  /** Open the "Pick the right product" pop-up for an item that needs review. */
+  openFix(item: RecentItem): void {
+    document.querySelector("kroger-restock-fix")?.remove();
+    const dialog = document.createElement("kroger-restock-fix") as RestockFixDialog;
+    dialog.item = item;
+    dialog.callService = (service, data) => this.callService(service, data);
+    dialog.onDone = (response, kind) =>
+      this.show(kind === "remove" ? quantityLine(response) : resultLine(response));
+    document.body.appendChild(dialog);
   }
 
   // ------------------------------------------------------------------
@@ -433,7 +440,7 @@ export class KrogerRestockCard extends LitElement {
                 </button>`
               : nothing}
             ${review
-              ? html`<button class="text" @click=${() => this.openList()}>Fix</button>`
+              ? html`<button class="text" @click=${() => this.openFix(item)}>Fix</button>`
               : nothing}
             <button
               class="icon ${confirming ? "confirm" : ""}"

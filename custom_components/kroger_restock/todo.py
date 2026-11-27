@@ -73,7 +73,7 @@ def status_line(item: ListItem, push_date: date | None = None) -> str:
             if item.candidates:
                 text += f" · {len(item.candidates)} possible matches"
         case ItemStatus.UNMATCHED:
-            text = "Not found in the Kroger catalog · fix with resolve_item"
+            text = "Not found in the Kroger catalog · tap Fix in the scanner card"
         case ItemStatus.PUSHING:
             text = "Adding to cart…"
         case ItemStatus.CHECK_CART:

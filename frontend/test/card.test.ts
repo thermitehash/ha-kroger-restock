@@ -149,13 +149,25 @@ describe("row actions", () => {
     expect(sent[0].service_data).toMatchObject({ item_id: "a", quantity: 1 });
   });
 
-  it("Fix opens the to-do list for items needing review", async () => {
-    const { hass } = makeHass([item({ status: "needs_review", status_text: "Needs review" })]);
+  it("Fix opens the pick-a-product pop-up", async () => {
+    const candidates = Array.from({ length: 7 }, (_, i) => ({
+      product_id: `000111104170${i}`,
+      name: `Milk ${i}`,
+      brand: "Kroger",
+      size: "1 gal",
+      price: 2.5 + i,
+      aisle: "Aisle 12",
+      in_stock: i !== 1,
+    }));
+    const { hass } = makeHass([
+      item({ status: "needs_review", status_text: "Needs review", name: "milk", candidates }),
+    ]);
     const card = await mount(hass);
-    const events: string[] = [];
-    window.addEventListener("location-changed", () => events.push(location.pathname + location.search));
     $$(card, "button.text").find((b) => b.textContent!.includes("Fix"))!.click();
-    expect(events.at(-1)).toBe("/todo?entity_id=todo.kroger_restock");
+    const dialog = document.querySelector("kroger-restock-fix") as any;
+    expect(dialog).not.toBeNull();
+    await dialog.updateComplete;
+    expect(dialog.shadowRoot.querySelectorAll("button.match")).toHaveLength(5);
   });
 
   it("hides actions when turned off", async () => {

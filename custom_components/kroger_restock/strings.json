@@ -585,6 +585,24 @@
           "description": "[%key:component::kroger_restock::services::scan_upc::fields::config_entry_id::description%]"
         }
       }
+    },
+    "search_products": {
+      "name": "Search products",
+      "description": "Searches your store's Kroger catalog, closest matches first (used by the scanner card's Fix pop-up). Returns product ID, name, brand, size, price, aisle, picture and stock for each. Changes nothing.",
+      "fields": {
+        "query": {
+          "name": "Search",
+          "description": "What to look for, e.g. 2% milk."
+        },
+        "limit": {
+          "name": "Results",
+          "description": "How many products to return (1-10)."
+        },
+        "config_entry_id": {
+          "name": "[%key:component::kroger_restock::services::scan_upc::fields::config_entry_id::name%]",
+          "description": "[%key:component::kroger_restock::services::scan_upc::fields::config_entry_id::description%]"
+        }
+      }
     }
   }
 }
