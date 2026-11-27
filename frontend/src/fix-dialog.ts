@@ -30,6 +30,11 @@ export type CallService = (service: string, data: Record<string, unknown>) => Pr
 const MAX_MATCHES = 5;
 const REMOVE_CONFIRM_MS = 4000;
 
+/** Saved by a version before 0.14: no picture, price or aisle fields at all. */
+export function isStale(candidate: Candidate): boolean {
+  return !("price" in candidate) && !("image_url" in candidate) && !("aisle" in candidate);
+}
+
 export function money(value: number | null | undefined): string {
   return typeof value === "number" ? `$${value.toFixed(2)}` : "";
 }
@@ -43,6 +48,7 @@ export class RestockFixDialog extends LitElement {
     error: { state: true },
     searched: { state: true },
     confirmRemove: { state: true },
+    brokenImages: { state: true },
   };
 
   item!: FixItem;
@@ -60,6 +66,7 @@ export class RestockFixDialog extends LitElement {
   error = "";
   searched = false;
   confirmRemove = false;
+  brokenImages: Set<string> = new Set();
 
   private confirmTimer?: number;
   private keyHandler = (e: KeyboardEvent) => {
@@ -83,6 +90,25 @@ export class RestockFixDialog extends LitElement {
   protected firstUpdated(): void {
     // With nothing to pick from, start typing a search right away.
     if (!this.results.length) (this.renderRoot.querySelector("input") as HTMLElement | null)?.focus();
+    else if (this.query.trim() && this.results.some(isStale)) void this.refreshStale();
+  }
+
+  /** Matches saved by older versions have no picture, price or aisle: fetch them fresh. */
+  private async refreshStale(): Promise<void> {
+    this.busy = true;
+    try {
+      const result = await this.callService("search_products", { query: this.query.trim(), limit: MAX_MATCHES });
+      const fresh: Candidate[] = (result.products ?? []).slice(0, MAX_MATCHES);
+      if (fresh.length && this.isConnected) this.results = fresh;
+    } catch {
+      // Keep the saved matches; the user can still pick or search.
+    } finally {
+      this.busy = false;
+    }
+  }
+
+  private imageFailed(url: string): void {
+    this.brokenImages = new Set([...this.brokenImages, url]);
   }
 
   close(): void {
@@ -222,8 +248,14 @@ export class RestockFixDialog extends LitElement {
       .join(" · ");
     const meta = [money(m.price), m.aisle].filter(Boolean).join(" · ");
     return html`<button class="match" @click=${() => this.pick(m)} ?disabled=${this.busy}>
-      ${m.image_url
-        ? html`<img src=${m.image_url} alt="" loading="lazy" referrerpolicy="no-referrer" />`
+      ${m.image_url && !this.brokenImages.has(m.image_url)
+        ? html`<img
+            src=${m.image_url}
+            alt=""
+            loading="lazy"
+            referrerpolicy="no-referrer"
+            @error=${() => this.imageFailed(m.image_url!)}
+          />`
         : html`<span class="noimg" aria-hidden="true"></span>`}
       <span class="text">
         <span class="name">${m.name}</span>

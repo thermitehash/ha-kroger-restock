@@ -14,6 +14,9 @@ function fixItem(id: string, name: string, candidates = 3): RecentItem {
     candidates: Array.from({ length: candidates }, (_, i) => ({
       product_id: `${id}-p${i}`,
       name: `${name} option ${i}`,
+      price: 1.99,
+      aisle: "Aisle 3",
+      image_url: null,
     })),
   };
 }

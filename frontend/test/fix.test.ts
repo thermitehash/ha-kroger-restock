@@ -120,6 +120,53 @@ describe("Fix pop-up", () => {
     }
   });
 
+  it("refreshes matches saved by older versions (no picture, price or aisle)", async () => {
+    const old = [
+      { product_id: "0007878398506", name: "Souper Carrots", brand: "Grimmway Farms", size: "12 oz", in_stock: true },
+      { product_id: "0001111091622", name: "Kroger Whole Carrots", brand: null, size: "2 lb", in_stock: true },
+    ];
+    const fresh = [
+      {
+        product_id: "0007878398506",
+        name: "Souper Carrots",
+        size: "12 oz",
+        price: 2.29,
+        aisle: "Produce",
+        image_url: "https://example.com/c.jpg",
+        in_stock: true,
+      },
+    ];
+    const { dialog, calls } = await open({ name: "Carrot", candidates: old }, { search_products: { products: fresh } });
+    await vi.waitFor(() => expect(qa(dialog, "button.match")).toHaveLength(1));
+    expect(calls).toEqual([{ service: "search_products", data: { query: "Carrot", limit: 5 } }]);
+    expect(qa(dialog, "button.match")[0].textContent).toContain("$2.29 · Produce");
+    expect(qa(dialog, "button.match")[0].querySelector("img")?.getAttribute("src")).toBe("https://example.com/c.jpg");
+  });
+
+  it("keeps the saved matches if the refresh fails or finds nothing", async () => {
+    const old = [{ product_id: "1", name: "Souper Carrots", size: "12 oz" }];
+    const { dialog } = await open({ name: "Carrot", candidates: old }, { search_products: new Error("down") });
+    await vi.waitFor(() => expect(dialog.busy).toBe(false));
+    expect(qa(dialog, "button.match")).toHaveLength(1);
+    expect(q(dialog, ".error")).toBeNull();
+  });
+
+  it("does not search again when the matches already have details", async () => {
+    const { calls } = await open({ candidates });
+    await new Promise((r) => setTimeout(r, 10));
+    expect(calls).toEqual([]);
+  });
+
+  it("a picture that fails to load falls back to the grey box", async () => {
+    const { dialog } = await open({ candidates });
+    const img = qa(dialog, "button.match")[0].querySelector("img")!;
+    img.dispatchEvent(new Event("error"));
+    await dialog.updateComplete;
+    const first = qa(dialog, "button.match")[0];
+    expect(first.querySelector("img")).toBeNull();
+    expect(first.querySelector(".noimg")).not.toBeNull();
+  });
+
   it("formats money", () => {
     expect(money(2.5)).toBe("$2.50");
     expect(money(null)).toBe("");
