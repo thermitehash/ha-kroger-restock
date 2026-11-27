@@ -7,7 +7,7 @@ from collections.abc import Generator
 from datetime import datetime, timedelta
 from email.utils import format_datetime
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from freezegun.api import FrozenDateTimeFactory
 from homeassistant.config_entries import ConfigEntryState
@@ -27,6 +27,7 @@ from custom_components.kroger_restock.const import (
     EVENT_ORDER_UPDATE,
     ItemStatus,
 )
+from custom_components.kroger_restock.orders import OrderWatcher
 from custom_components.kroger_restock.store import RestockStore
 
 from .helpers import FakeKrogerApi, make_product
@@ -623,6 +624,14 @@ async def test_same_email_in_another_folder_is_not_processed_twice(
     assert len(events) == 1
 
 
+@pytest.fixture
+def no_order_stock_check() -> Generator[None]:
+    """As if the order-time stock check never ran (confirmation missed)."""
+    with patch.object(OrderWatcher, "async_check_order_stock", AsyncMock()):
+        yield
+
+
+@pytest.mark.usefixtures("no_order_stock_check")
 async def test_completed_order_asks_to_mark_received(
     hass: HomeAssistant,
     tracking: MockConfigEntry,
@@ -631,6 +640,7 @@ async def test_completed_order_asks_to_mark_received(
     fake_api: FakeKrogerApi,
     freezer: FrozenDateTimeFactory,
 ) -> None:
+    """Without the order-time stock check, the user is asked about everything."""
     calls = async_mock_service(hass, "notify", "mobile_app_pixel")
     await set_options(hass, tracking, notify_targets=["notify.mobile_app_pixel"])
     ids = await setup_cart(hass, fake_api)
@@ -712,6 +722,7 @@ async def _complete_order_with_cart(
     return ids, calls, actions
 
 
+@pytest.mark.usefixtures("no_order_stock_check")
 async def test_some_missing_reply_readds_those_items(
     hass: HomeAssistant,
     tracking: MockConfigEntry,
@@ -750,6 +761,7 @@ async def test_some_missing_reply_readds_those_items(
     assert 'Couldn\'t match: "kale"' in message
 
 
+@pytest.mark.usefixtures("no_order_stock_check")
 async def test_some_missing_with_empty_reply_changes_nothing(
     hass: HomeAssistant,
     tracking: MockConfigEntry,
@@ -1086,3 +1098,258 @@ async def test_unlink_clears_baseline(
     assert setup_integration.runtime_data.coordinator.data.imap_baseline is not None
     await set_options(hass, setup_integration, imap_entry="")
     assert setup_integration.runtime_data.coordinator.data.imap_baseline is None
+
+
+# ---------------------------------------------------------------------------
+# Order-time stock check: checked when the order is placed; at pickup/delivery
+# the in-stock items are marked received and only out-of-stock ones are asked.
+
+EGGS = "Simple Truth Organic Large Brown Eggs"
+COKE = "Coca-Cola Classic Soda"
+
+
+async def place_order(
+    hass: HomeAssistant,
+    tracking: MockConfigEntry,
+    imap_entry: MockConfigEntry,
+    mailbox: dict[str, str],
+    fake_api: FakeKrogerApi,
+    freezer: FrozenDateTimeFactory,
+    out_of_stock: tuple[str, ...] = (),
+    notify: bool = True,
+) -> tuple[dict[str, str], list[ServiceCall]]:
+    calls = async_mock_service(hass, "notify", "mobile_app_pixel")
+    await set_options(
+        hass,
+        tracking,
+        notify_targets=["notify.mobile_app_pixel"],
+        notify_orders=notify,
+    )
+    ids = await setup_cart(hass, fake_api)
+    pids = {EGGS: "0001111000101", COKE: "0004900002891"}
+    for name in out_of_stock:  # sold out between the push and the order
+        fake_api.set_stock(pids[name], "TEMPORARILY_OUT_OF_STOCK")
+    freezer.tick(timedelta(minutes=1))
+    calls.clear()
+    await deliver(hass, imap_entry, mailbox, SUBJECTS["confirmed"], CONFIRMED_TEXT)
+    await hass.async_block_till_done()
+    return ids, calls
+
+
+async def pick_up(
+    hass: HomeAssistant, imap_entry: MockConfigEntry, mailbox: dict[str, str]
+) -> None:
+    await deliver(hass, imap_entry, mailbox, SUBJECTS["ready"], READY_TEXT)
+    await deliver(hass, imap_entry, mailbox, SUBJECTS["receipt"], RECEIPT_TEXT)
+    await hass.async_block_till_done()
+
+
+def last_order(entry: MockConfigEntry):  # type: ignore[no-untyped-def]
+    return entry.runtime_data.coordinator.data.orders[0]
+
+
+async def test_placed_order_is_stock_checked_quietly(
+    hass: HomeAssistant,
+    tracking: MockConfigEntry,
+    imap_entry: MockConfigEntry,
+    mailbox: dict[str, str],
+    fake_api: FakeKrogerApi,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    ids, calls = await place_order(
+        hass, tracking, imap_entry, mailbox, fake_api, freezer, out_of_stock=(COKE,)
+    )
+    order = last_order(tracking)
+    assert order.stock_checked_at is not None
+    assert order.out_of_stock == [{"item_id": ids[COKE], "name": COKE}]
+    coordinator = tracking.runtime_data.coordinator
+    coke = coordinator.get_item(ids[COKE])
+    assert coke.status is ItemStatus.IN_CART  # the cart can't be changed
+    assert coke.stock_level == "TEMPORARILY_OUT_OF_STOCK"
+    from custom_components.kroger_restock.todo import status_line
+
+    assert status_line(coke) == "In cart · out of stock now"
+    assert status_line(coordinator.get_item(ids[EGGS])).startswith("In cart · Aisle")
+    assert calls == []  # nothing asked when the order is placed
+    pushes = len(fake_api.cart_lines)
+    assert pushes == 2  # and nothing pushed
+    # Survives a restart.
+    await hass.config_entries.async_reload(tracking.entry_id)
+    await hass.async_block_till_done()
+    assert last_order(tracking).out_of_stock == [{"item_id": ids[COKE], "name": COKE}]
+
+
+async def test_nothing_out_of_stock_marks_all_received_without_asking(
+    hass: HomeAssistant,
+    tracking: MockConfigEntry,
+    imap_entry: MockConfigEntry,
+    mailbox: dict[str, str],
+    fake_api: FakeKrogerApi,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    ids, calls = await place_order(
+        hass, tracking, imap_entry, mailbox, fake_api, freezer
+    )
+    freezer.tick(timedelta(minutes=1))
+    late = await hass.services.async_call(  # added after the order was placed
+        DOMAIN, "add_item", {"name": "unobtainium"}, blocking=True, return_response=True
+    )
+    calls.clear()
+    await pick_up(hass, imap_entry, mailbox)
+    coordinator = tracking.runtime_data.coordinator
+    assert all(
+        coordinator.get_item(i).status is ItemStatus.RECEIVED for i in ids.values()
+    )
+    assert coordinator.get_item(late["item_id"]).status is ItemStatus.UNMATCHED
+    [note] = [c for c in calls if "picked up" in c.data["title"]]
+    assert note.data["title"] == "Kroger order picked up"
+    assert note.data["message"] == (
+        "2 items marked received. Nothing was out of stock when you ordered."
+    )
+    assert "data" not in note.data  # no question, no buttons
+
+
+async def test_one_out_of_stock_item_is_the_only_question(
+    hass: HomeAssistant,
+    tracking: MockConfigEntry,
+    imap_entry: MockConfigEntry,
+    mailbox: dict[str, str],
+    fake_api: FakeKrogerApi,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    ids, calls = await place_order(
+        hass, tracking, imap_entry, mailbox, fake_api, freezer, out_of_stock=(COKE,)
+    )
+    await pick_up(hass, imap_entry, mailbox)
+    coordinator = tracking.runtime_data.coordinator
+    assert coordinator.get_item(ids[EGGS]).status is ItemStatus.RECEIVED
+    assert coordinator.get_item(ids[COKE]).status is ItemStatus.IN_CART
+    [ask] = [c for c in calls if "did these come" in c.data["title"]]
+    assert ask.data["title"] == "Kroger order picked up: did these come?"
+    assert ask.data["message"] == (
+        f"1 item marked received. {COKE} was out of stock when you ordered. "
+        "Did it come? Anything that didn't come goes back on the list."
+    )
+    actions = {a["title"]: a["action"] for a in ask.data["data"]["actions"]}
+    assert list(actions) == ["Yes, it came", "No"]
+
+    hass.bus.async_fire(
+        "mobile_app_notification_action", {"action": actions["Yes, it came"]}
+    )
+    await hass.async_block_till_done()
+    assert coordinator.get_item(ids[COKE]).status is ItemStatus.RECEIVED
+
+
+async def test_no_puts_the_out_of_stock_item_back_on_the_list(
+    hass: HomeAssistant,
+    tracking: MockConfigEntry,
+    imap_entry: MockConfigEntry,
+    mailbox: dict[str, str],
+    fake_api: FakeKrogerApi,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    ids, calls = await place_order(
+        hass, tracking, imap_entry, mailbox, fake_api, freezer, out_of_stock=(COKE,)
+    )
+    await pick_up(hass, imap_entry, mailbox)
+    [ask] = [c for c in calls if "did these come" in c.data["title"]]
+    actions = {a["title"]: a["action"] for a in ask.data["data"]["actions"]}
+    calls.clear()
+    hass.bus.async_fire("mobile_app_notification_action", {"action": actions["No"]})
+    await hass.async_block_till_done()
+    coordinator = tracking.runtime_data.coordinator
+    assert coordinator.get_item(ids[COKE]).status is ItemStatus.WAITING  # still out
+    assert coordinator.get_item(ids[EGGS]).status is ItemStatus.RECEIVED
+    assert "Coca-Cola Classic Soda (waiting on stock)" in calls[0].data["message"]
+
+
+async def test_several_out_of_stock_items_some_missing(
+    hass: HomeAssistant,
+    tracking: MockConfigEntry,
+    imap_entry: MockConfigEntry,
+    mailbox: dict[str, str],
+    fake_api: FakeKrogerApi,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    ids, calls = await place_order(
+        hass,
+        tracking,
+        imap_entry,
+        mailbox,
+        fake_api,
+        freezer,
+        out_of_stock=(EGGS, COKE),
+    )
+    await pick_up(hass, imap_entry, mailbox)
+    [ask] = [c for c in calls if "did these come" in c.data["title"]]
+    assert ask.data["message"].startswith(
+        f"0 items marked received. These were out of stock when you ordered: "
+        f"{EGGS}, {COKE}. Did they come?"
+    )
+    actions = {a["title"]: a for a in ask.data["data"]["actions"]}
+    assert list(actions) == ["All came", "None came", "Some missing…"]
+    assert actions["Some missing…"]["behavior"] == "textInput"
+    fake_api.set_stock("0001111000101", "HIGH")  # eggs are back now
+    hass.bus.async_fire(
+        "mobile_app_notification_action",
+        {"action": actions["Some missing…"]["action"], "reply_text": "eggs"},
+    )
+    await hass.async_block_till_done()
+    coordinator = tracking.runtime_data.coordinator
+    assert coordinator.get_item(ids[EGGS]).status is ItemStatus.IN_CART  # pushed again
+    assert coordinator.get_item(ids[COKE]).status is ItemStatus.RECEIVED
+
+
+async def test_none_came_puts_every_out_of_stock_item_back(
+    hass: HomeAssistant,
+    tracking: MockConfigEntry,
+    imap_entry: MockConfigEntry,
+    mailbox: dict[str, str],
+    fake_api: FakeKrogerApi,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    ids, calls = await place_order(
+        hass,
+        tracking,
+        imap_entry,
+        mailbox,
+        fake_api,
+        freezer,
+        out_of_stock=(EGGS, COKE),
+    )
+    await pick_up(hass, imap_entry, mailbox)
+    [ask] = [c for c in calls if "did these come" in c.data["title"]]
+    actions = {a["title"]: a["action"] for a in ask.data["data"]["actions"]}
+    hass.bus.async_fire(
+        "mobile_app_notification_action", {"action": actions["None came"]}
+    )
+    await hass.async_block_till_done()
+    coordinator = tracking.runtime_data.coordinator
+    assert all(
+        coordinator.get_item(i).status is ItemStatus.WAITING for i in ids.values()
+    )
+
+
+async def test_with_order_notifications_off_in_stock_items_still_received(
+    hass: HomeAssistant,
+    tracking: MockConfigEntry,
+    imap_entry: MockConfigEntry,
+    mailbox: dict[str, str],
+    fake_api: FakeKrogerApi,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    ids, calls = await place_order(
+        hass,
+        tracking,
+        imap_entry,
+        mailbox,
+        fake_api,
+        freezer,
+        out_of_stock=(COKE,),
+        notify=False,
+    )
+    await pick_up(hass, imap_entry, mailbox)
+    coordinator = tracking.runtime_data.coordinator
+    assert coordinator.get_item(ids[EGGS]).status is ItemStatus.RECEIVED
+    assert coordinator.get_item(ids[COKE]).status is ItemStatus.IN_CART  # left as is
+    assert calls == []

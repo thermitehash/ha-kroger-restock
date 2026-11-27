@@ -306,20 +306,56 @@ class KrogerRestockCoordinator(DataUpdateCoordinator[RestockData]):
             and (before is None or (i.cart_pushed_at and i.cart_pushed_at <= before))
         ]
 
+    async def async_check_order_stock(
+        self, before: datetime | None = None
+    ) -> dict[str, Any]:
+        """Re-check stock of the in-cart items in an order that was just placed.
+
+        Nothing is pushed or removed (the cart is write-only); each item's
+        stock level is updated, and the out-of-stock ones are returned.
+        """
+        out: list[dict[str, str]] = []
+        errors = 0
+        checked = 0
+        for item in self.in_cart_items(before):
+            if not item.product_id:
+                continue
+            self._product_cache.pop(item.product_id, None)
+            try:
+                product = await self._get_product(item.product_id)
+            except HomeAssistantError as err:
+                _LOGGER.debug("Order stock check failed for %s: %s", item.name, err)
+                errors += 1
+                continue
+            checked += 1
+            async with self._lock:
+                item.last_stock_check = dt_util.utcnow()
+                if product is None:
+                    continue
+                item.stock_level = product.stock_level
+                if not product.in_stock:
+                    out.append({"item_id": item.id, "name": item.name})
+        if checked:
+            self._changed()
+        return {"checked": checked, "out_of_stock": out, "errors": errors}
+
     async def async_mark_cart_received(
         self,
         before: datetime | None = None,
         missing: list[str] | None = None,
+        exclude: Iterable[str] = (),
     ) -> dict[str, Any]:
         """Mark in-cart items received after an order arrived.
 
         ``missing`` lists items that were expected but didn't arrive (item IDs
         or names, e.g. from the notification's text reply). Those go back on
         the list through the re-add path (stock check, then pushed again for
-        the next order); everything else is marked received.
+        the next order); everything else is marked received. Items in
+        ``exclude`` (IDs) are left as they are.
         """
+        skip = set(exclude)
         async with self._lock:
-            items = self.in_cart_items(before)
+            items = [i for i in self.in_cart_items(before) if i.id not in skip]
             by_id = {item.id: item for item in items}
             missing_items: list[ListItem] = []
             unmatched: list[str] = []

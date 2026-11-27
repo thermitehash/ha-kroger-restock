@@ -67,6 +67,7 @@ EVENT_NOTIFICATION_ACTION = "mobile_app_notification_action"
 ACTION_MARK_RECEIVED = "KROGER_RESTOCK_MARK_RECEIVED"
 CHOICE_ALL = "ALL"
 CHOICE_MISSING = "MISSING"
+CHOICE_NONE = "NONE"
 
 
 def missing_summary(result: dict[str, Any]) -> str:
@@ -282,7 +283,7 @@ class OrderWatcher:
         """
         rest = str(event.data["action"]).removeprefix(self._action_id).lstrip("_")
         number, _, choice = rest.rpartition("_")
-        if choice not in (CHOICE_ALL, CHOICE_MISSING):
+        if choice not in (CHOICE_ALL, CHOICE_MISSING, CHOICE_NONE):
             number, choice = rest, CHOICE_ALL  # v0.7.0-dev action IDs
         order = next(
             (o for o in self.coordinator.data.orders if o.order_number == number), None
@@ -290,6 +291,16 @@ class OrderWatcher:
         cutoff = (order.placed_at or order.completed_at) if order else None
         if choice == CHOICE_ALL:
             await self.coordinator.async_mark_cart_received(before=cutoff)
+            return
+        if choice == CHOICE_NONE:
+            # None of the items that were out of stock at order time came.
+            ids = [o["item_id"] for o in (order.out_of_stock if order else [])]
+            result = await self.coordinator.async_mark_cart_received(
+                before=cutoff, missing=ids
+            )
+            await self.coordinator.async_notify(
+                "Kroger order: missing items", missing_summary(result)
+            )
             return
         reply = str(event.data.get("reply_text") or "").strip()
         if not reply:
@@ -577,7 +588,32 @@ class OrderWatcher:
             },
         )
         await self._notify(order, previous, new_shorted, matched, readded)
+        if (
+            order.status == OrderStatus.PLACED
+            and order.status != previous
+            and order.stock_checked_at is None
+        ):
+            # Quietly check the order's items now; the user is only asked
+            # about out-of-stock ones once the order is picked up/delivered.
+            coordinator.config_entry.async_create_task(
+                self.hass,
+                self.async_check_order_stock(order),
+                "kroger_restock order stock check",
+            )
         return order
+
+    async def async_check_order_stock(self, order: KrogerOrder) -> None:
+        """Record which of an order's in-cart items are out of stock."""
+        result = await self.coordinator.async_check_order_stock(before=order.placed_at)
+        order.stock_checked_at = dt_util.utcnow()
+        order.out_of_stock = result["out_of_stock"]
+        _LOGGER.info(
+            "Order %s: checked %d in-cart items, %d out of stock",
+            order.order_number,
+            result["checked"],
+            len(result["out_of_stock"]),
+        )
+        self.coordinator.mark_changed()
 
     def _match_shorted(self, names: list[str]) -> dict[str, ListItem]:
         candidates = [
@@ -600,13 +636,14 @@ class OrderWatcher:
         readded: list[str],
     ) -> None:
         """Notify on ready / out for delivery / cancelled / completed, and missing items."""
-        if not entry_option(
+        notify = entry_option(
             self.coordinator.config_entry, CONF_NOTIFY_ORDERS, DEFAULT_NOTIFY_ORDERS
-        ):
-            return
+        )
         changed = order.status != previous
         if changed and order.status == OrderStatus.COMPLETED:
-            await self._notify_completed(order)
+            await self._order_completed(order, notify=notify)
+            return
+        if not notify:
             return
         status_changed = changed and order.status in _NOTIFY_STATUSES
         if not status_changed and not shorted:
@@ -633,18 +670,79 @@ class OrderWatcher:
                 parts.append(label + ", ".join(others) + ".")
         await self.coordinator.async_notify(title, " ".join(parts))
 
-    async def _notify_completed(self, order: KrogerOrder) -> None:
-        """Ask whether to mark in-cart items received.
+    async def _order_completed(self, order: KrogerOrder, *, notify: bool) -> None:
+        """Settle the order's in-cart items once it's picked up or delivered.
 
-        The receipt email has no item list, so items are never checked off
-        automatically: the user confirms with the notification's button (or
-        the mark_cart_received action).
+        When the items were stock-checked as the order was placed, the ones
+        that were in stock are marked received, and the user is asked only
+        about the ones that were out of stock. Without that check (e.g. the
+        confirmation email was missed), the user is asked about everything.
         """
         cutoff = order.placed_at or order.completed_at
-        count = len(self.coordinator.in_cart_items(before=cutoff))
-        verb = "delivered" if order.modality == "delivery" else "picked up"
-        if count == 0:
+        items = self.coordinator.in_cart_items(before=cutoff)
+        if not items:
             return
+        if order.stock_checked_at is None:
+            if notify:
+                await self._notify_completed(order, len(items))
+            return
+        in_order = {i.id: i for i in items}
+        risky = [
+            in_order[o["item_id"]]
+            for o in order.out_of_stock
+            if o["item_id"] in in_order
+        ]
+        result = await self.coordinator.async_mark_cart_received(
+            before=cutoff, exclude=[i.id for i in risky]
+        )
+        if not notify:
+            return
+        verb = "delivered" if order.modality == "delivery" else "picked up"
+        received = result["received"]
+        done = f"{received} {'item' if received == 1 else 'items'} marked received."
+        if not risky:
+            await self.coordinator.async_notify(
+                f"Kroger order {verb}",
+                f"{done} Nothing was out of stock when you ordered.",
+            )
+            return
+        names = ", ".join(i.name for i in risky)
+        action = f"{self._action_id}_{order.order_number}"
+        if len(risky) == 1:
+            question = f"{names} was out of stock when you ordered. Did it come?"
+            actions = [
+                {"action": f"{action}_{CHOICE_ALL}", "title": "Yes, it came"},
+                {"action": f"{action}_{CHOICE_NONE}", "title": "No"},
+            ]
+        else:
+            question = (
+                f"These were out of stock when you ordered: {names}. Did they come?"
+            )
+            actions = [
+                {"action": f"{action}_{CHOICE_ALL}", "title": "All came"},
+                {"action": f"{action}_{CHOICE_NONE}", "title": "None came"},
+                {
+                    "action": f"{action}_{CHOICE_MISSING}",
+                    "title": "Some missing…",
+                    "behavior": "textInput",
+                    "textInputButtonTitle": "Add back",
+                    "textInputPlaceholder": "Which didn't come? e.g. eggs",
+                },
+            ]
+        await self.coordinator.async_notify(
+            f"Kroger order {verb}: did these come?",
+            f"{done} {question} Anything that didn't come goes back on the list.",
+            actions=actions,
+        )
+
+    async def _notify_completed(self, order: KrogerOrder, count: int) -> None:
+        """Ask whether to mark all in-cart items received (no stock check ran).
+
+        The receipt email has no item list, so without the order-time stock
+        check nothing is checked off automatically: the user confirms with the
+        notification's button (or the mark_cart_received action).
+        """
+        verb = "delivered" if order.modality == "delivery" else "picked up"
         plural = "item" if count == 1 else "items"
         action = f"{self._action_id}_{order.order_number}"
         actions: list[dict[str, str]] = [

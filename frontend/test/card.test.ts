@@ -88,6 +88,15 @@ describe("list", () => {
     expect(rows[1].querySelector(".qty")).toBeNull();
   });
 
+  it("marks in-cart items that went out of stock", async () => {
+    const card = await mount(
+      makeHass([item({ status_text: "In cart · out of stock now" }), item({ item_id: "b" })]).hass,
+    );
+    const rows = $$(card, "li.row");
+    expect(rows[0].classList.contains("out-now")).toBe(true);
+    expect(rows[1].classList.contains("out-now")).toBe(false);
+  });
+
   it("respects rows and empty / missing sensor states", async () => {
     const many = Array.from({ length: 12 }, (_, i) => item({ item_id: String(i) }));
     let card = await mount(makeHass(many).hass, { rows: 5 });

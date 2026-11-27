@@ -15,6 +15,7 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.util import dt as dt_util
 
 from . import KrogerConfigEntry
+from .api import StockLevel
 from .const import ItemSource, ItemStatus
 from .coordinator import KrogerRestockCoordinator
 from .entity import KrogerRestockEntity
@@ -57,6 +58,10 @@ def status_line(item: ListItem, push_date: date | None = None) -> str:
                 if item.pushed_quantity >= item.quantity
                 else "Cart push pending"
             )
+            if item.stock_level == StockLevel.TEMPORARILY_OUT_OF_STOCK:
+                # Found by the stock check when the order was placed.
+                text += " · out of stock now"
+            aisle = None if "out of stock" in text else aisle
         case ItemStatus.WAITING:
             since = item.out_of_stock_since
             text = (

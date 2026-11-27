@@ -501,10 +501,30 @@ at every start; that's expected and ignored.)
 4. In **Kroger Restock → Configure → Order tracking**, pick that connection.
    Each choice is shown as *"<name> — folder: … · search: …"*. If the one you
    pick searches `UnSeen` or watches INBOX, you'll get a warning first.
+   - **Stock check when you order:** when the order-confirmation email
+     arrives, every in-cart item in that order is checked for stock at your
+     store, quietly (no notification, nothing changed in the cart). An item
+     that has sold out shows **In cart · out of stock now** on the list and in
+     the scanner card.
+   - **When the order is picked up / delivered** (receipt email), the items
+     that were in stock are marked received automatically, and you're asked
+     only about the ones that were out of stock: *"Large Eggs was out of stock
+     when you ordered. Did it come?"*
+     - One item: **Yes, it came** / **No**.
+     - Several: **All came** / **None came** / **Some missing…** (type which
+       didn't come).
+     - Whatever didn't come goes back on the list (stock check, then back into
+       the cart for your next order). If nothing was out of stock you just get
+       *"N items marked received."*, with no question.
+     - Items added to the cart after the order was placed aren't touched.
+     - With **Notify on order updates** off, the in-stock items are still
+       marked received, and out-of-stock ones stay in the cart for you to
+       check off.
    - **Notify on order updates** (on by default): ready for pickup, cancelled,
-     and **order picked up / delivered**, which asks *"Mark the N in-cart
-     items received?"* Items are never checked off automatically, because the
-     receipt doesn't list them. The notification has three buttons:
+     and order picked up / delivered as above. If the stock check didn't run
+     (for example the confirmation email was missed), the pickup notification
+     asks about everything instead: *"Mark the N in-cart items received?"*,
+     with three buttons:
      - **All received:** marks every in-cart item received.
      - **Some missing…:** type what didn't come (e.g. `eggs, milk`). Those
        items go back on the list (stock check, then back into the cart for
@@ -926,6 +946,7 @@ These come from Kroger's public API:
 | Card appears in Add card → By card (real Home Assistant frontend) | **Verified** (v0.13.1, Home Assistant 2026.10 in CI-like setup) |
 | Fix pop-up: pick from 5 matches, search, remove | New in v0.14.0; unit tests plus Chromium check; not yet live |
 | Fix button with count, greyed when nothing to fix | New in v0.15.0; unit tests plus Chromium check; not yet live |
+| Stock check at order time; ask only about out-of-stock items at pickup | New in v0.16.0; tested with sample order emails; not yet live |
 | Shortcut Perform Action returning response data | **Verified live** (HA iOS app: the `scan_upc` response JSON reached the Shortcut) |
 | Whether the cart accepts an out-of-stock UPC | Unknown (`tests/test_live_cart.py`, run locally). The integration never pushes out-of-stock items either way |
 | Refresh-token lifetime | Unknown |

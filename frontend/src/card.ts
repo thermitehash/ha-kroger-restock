@@ -471,7 +471,8 @@ export class KrogerRestockCard extends LitElement {
     const review = item.status === "needs_review" || item.status === "unmatched";
     const confirming = this._confirmRemove === item.item_id;
     const name = [item.name, item.size ? `(${item.size})` : ""].filter(Boolean).join(" ");
-    return html`<li class="row status-${item.status}">
+    const outNow = item.status === "in_cart" && /out of stock/i.test(item.status_text ?? "");
+    return html`<li class="row status-${item.status} ${outNow ? "out-now" : ""}">
       <div class="main">
         <div class="name">
           <span>${name}</span>${item.quantity > 1 ? html`<span class="qty">×${item.quantity}</span>` : nothing}
@@ -679,6 +680,7 @@ export class KrogerRestockCard extends LitElement {
       text-overflow: ellipsis;
       white-space: nowrap;
     }
+    .out-now .sub,
     .status-needs_review .sub,
     .status-unmatched .sub,
     .status-check_cart .sub {
