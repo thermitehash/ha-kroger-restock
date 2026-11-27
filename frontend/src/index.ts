@@ -14,7 +14,7 @@ w.customCards = w.customCards || [];
 if (!w.customCards.some((c: { type: string }) => c.type === CARD_TYPE)) {
   w.customCards.push({
     type: CARD_TYPE,
-    name: "Restock scanner",
+    name: "Kroger Restock scanner",
     description: "Scan or type groceries onto the Kroger Restock list and fix recent additions.",
     preview: true,
     documentationURL: "https://github.com/thrivestorm2/ha-kroger-restock#restock-scanner-card",

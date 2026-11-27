@@ -584,11 +584,25 @@ file instead.
 ## Restock scanner card
 
 A dashboard card with a **Scan** button and the most recently added items.
-It comes with the integration: there's no separate download and no resource
-to add. After updating, refresh the dashboard (or restart the app).
+It comes with the integration: there's no separate download. On startup the
+integration adds it to your dashboard resources (**Settings → Dashboards →
+⋮ → Resources**, `/kroger_restock_frontend/kroger-restock-card.js`) and
+updates the version there after each update, so browsers don't keep an old
+copy. After an update, restart Home Assistant and reload the page (in the
+app: Settings → Companion app → Debugging → Reset frontend cache).
 
-**Add it:** edit a dashboard → **Add card** → search **Restock scanner**. It
-picks the **Recently scanned** sensor on its own.
+**Add it:** edit a dashboard → **Add card** → search **Kroger Restock
+scanner**. It picks the **Recently scanned** sensor on its own.
+
+**YAML-mode dashboards:** resources can't be added for you there; the card
+is still loaded on every page, or add it yourself:
+
+```yaml
+lovelace:
+  resources:
+    - url: /kroger_restock_frontend/kroger-restock-card.js
+      type: module
+```
 
 ```yaml
 type: custom:kroger-restock-card

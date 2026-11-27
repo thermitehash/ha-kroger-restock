@@ -352,7 +352,7 @@ var D=globalThis,H=D.ShadowRoot&&(D.ShadyCSS===void 0||D.ShadyCSS.nativeShadow)&
       .computeLabel=${e=>Gt[e.name]??e.name}
       .computeHelper=${e=>Zt[e.name]}
       @value-changed=${this.changed}
-    ></ha-form>`}changed(t){t.stopPropagation();let e={...t.detail.value,type:`custom:${f}`};for(let s of["title","shortcut"])e[s]||delete e[s];this.dispatchEvent(new CustomEvent("config-changed",{detail:{config:e},bubbles:!0,composed:!0}))}};I.properties={hass:{attribute:!1},_config:{state:!0}};customElements.get(f)||customElements.define(f,C);customElements.get(`${f}-editor`)||customElements.define(`${f}-editor`,I);var j=window;j.customCards=j.customCards||[];j.customCards.some(n=>n.type===f)||j.customCards.push({type:f,name:"Restock scanner",description:"Scan or type groceries onto the Kroger Restock list and fix recent additions.",preview:!0,documentationURL:"https://github.com/thrivestorm2/ha-kroger-restock#restock-scanner-card"});
+    ></ha-form>`}changed(t){t.stopPropagation();let e={...t.detail.value,type:`custom:${f}`};for(let s of["title","shortcut"])e[s]||delete e[s];this.dispatchEvent(new CustomEvent("config-changed",{detail:{config:e},bubbles:!0,composed:!0}))}};I.properties={hass:{attribute:!1},_config:{state:!0}};customElements.get(f)||customElements.define(f,C);customElements.get(`${f}-editor`)||customElements.define(`${f}-editor`,I);var j=window;j.customCards=j.customCards||[];j.customCards.some(n=>n.type===f)||j.customCards.push({type:f,name:"Kroger Restock scanner",description:"Scan or type groceries onto the Kroger Restock list and fix recent additions.",preview:!0,documentationURL:"https://github.com/thrivestorm2/ha-kroger-restock#restock-scanner-card"});
 /*! Bundled license information:
 
 @lit/reactive-element/css-tag.js:
