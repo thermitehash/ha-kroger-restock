@@ -35,6 +35,7 @@ guide, and an ESPHome wall scanner. See [Roadmap](#roadmap).
 - [Events](#events)
 - [Order tracking from emails](#order-tracking-from-emails)
 - [Printing](#printing)
+- [Restock scanner card](#restock-scanner-card)
 - [Scanning with an iPhone Shortcut](#scanning-with-an-iphone-shortcut)
 - [Blueprint and examples](#blueprint-and-examples)
 - [Options](#options)
@@ -580,6 +581,72 @@ file instead.
 
 <!-- Screenshot placeholder: receipt and PDF printouts -->
 
+## Restock scanner card
+
+A dashboard card with a **Scan** button and the most recently added items.
+It comes with the integration: there's no separate download and no resource
+to add. After updating, refresh the dashboard (or restart the app).
+
+**Add it:** edit a dashboard → **Add card** → search **Restock scanner**. It
+picks the **Recently scanned** sensor on its own.
+
+```yaml
+type: custom:kroger-restock-card
+entity: sensor.kroger_restock_recently_scanned   # your store's sensor
+title: Groceries          # optional
+rows: 10                  # items shown (1-25)
+scanner: auto             # auto | app | camera | off
+show_input: true          # text field: barcode, item name or product link
+show_actions: true        # − / + / Undo / Fix buttons
+shortcut: Grocery scan    # optional: a button that runs this iPhone Shortcut
+```
+
+**Scan button:**
+
+| Where | How it scans |
+| --- | --- |
+| Home Assistant app (iPhone, Android) | The app's own barcode scanner, when the app offers one. It stays open: scan item after item, and each result shows in the scanner. Close it when done |
+| Browser over https (Home Assistant Cloud, or your own certificate) | The camera, full screen. Chrome on Android uses the browser's barcode reader; Safari, iOS and Firefox use a reader that ships with the integration (about 1 MB, loaded only when the camera opens, never from the internet) |
+| Plain http | No camera (browsers only allow it over https). Use the text field |
+
+`auto` uses the app's scanner when it's there, otherwise the camera. Scans
+from the card are recorded with source `card`.
+
+**Text field:** type a barcode, an item name, or paste a product link; it
+sends `scan_upc` or `add_item` as appropriate.
+
+**Recent list:** the last items that landed on the list (scanned, typed,
+shared or spoken), newest first. Scanning something already on the list
+moves it to the top. QR codes and other ignored scans aren't listed; the
+result line above the list shows them. Each row shows the quantity, its
+status and aisle, and how long ago it was added:
+
+- **− / +** change the quantity (`set_quantity`). At quantity 1 the − button
+  is a bin: tap it, then **Remove?** to confirm. Lowering an item that's
+  already in the Kroger cart shows *"Remove N from the Kroger app cart"*.
+- **Undo +1** on items you just scanned again.
+- **Fix** opens the to-do list for items that need review or weren't found.
+
+**The "Recently scanned" sensor** feeds the card and works on its own: its
+state is the newest item and its `items` attribute lists the last 25 (name,
+size, quantity, status, `status_text`, aisle, result, `at`, `added`,
+`can_undo`, `item_id`). The list isn't stored in history. A plain Markdown
+card can show it too:
+
+```yaml
+type: markdown
+content: >-
+  {% for i in state_attr('sensor.kroger_restock_recently_scanned', 'items')[:5] %}
+  - {{ i.name }}{% if i.quantity > 1 %} ×{{ i.quantity }}{% endif %}: {{ i.status_text }}
+  {% endfor %}
+```
+
+**Not yet tested live:** the app's own scanner (the card reaches it through
+an interface the Home Assistant app uses internally; if an app or frontend
+update changes it, the card falls back to the camera and text field), and
+the camera inside the Home Assistant app. The browser camera and the
+built-in reader were tested in Chromium with a generated barcode.
+
 ## Scanning with an iPhone Shortcut
 
 Scan a barcode with your iPhone camera and add it straight to the list.
@@ -815,6 +882,9 @@ These come from Kroger's public API:
 | Share Sheet Shortcut from the Kroger iOS app (`url`) | **Verified live** (v0.11.0: Get URLs from Input → `scan_upc` matched the product; name and aisle in the response) |
 | `product_id`, Notify on every scan, cart check | New in v0.11.0; tested in CI, not yet live |
 | `set_quantity`, to-do `×N` lowering, Undo +1 | New in v0.12.0; tested in CI, not yet live |
+| Restock scanner card: list, text field, row buttons | New in v0.13.0; unit tests plus a real-browser check (Chromium); not yet live |
+| Card's browser camera + built-in barcode reader | Tested in Chromium with a generated EAN-13 (fake camera); not yet on a phone |
+| Card using the Home Assistant app's own scanner | Not yet tested |
 | Shortcut Perform Action returning response data | **Verified live** (HA iOS app: the `scan_upc` response JSON reached the Shortcut) |
 | Whether the cart accepts an out-of-stock UPC | Unknown (`tests/test_live_cart.py`, run locally). The integration never pushes out-of-stock items either way |
 | Refresh-token lifetime | Unknown |
@@ -848,6 +918,17 @@ pytest
 UPDATE_GOLDEN=1 pytest tests/test_printing.py   # after changing a print layout
 python script/gen_translations.py   # after editing strings.json
 node script/render_icons.js         # after editing assets/*.svg
+```
+
+**Scanner card** (TypeScript + Lit, in `frontend/`). The built files in
+`custom_components/kroger_restock/frontend/` are committed, because HACS
+installs the repository as is; CI rebuilds them and fails if they differ.
+
+```bash
+cd frontend
+npm ci
+npm run typecheck && npm test
+npm run build      # after any change in frontend/src
 ```
 
 **Releasing:** bump `version` in `manifest.json` (and optionally add

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import logging
+from pathlib import Path
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
@@ -13,6 +14,7 @@ from homeassistant.helpers import config_entry_oauth2_flow, issue_registry as ir
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 import homeassistant.helpers.config_validation as cv
 from homeassistant.helpers.typing import ConfigType
+from homeassistant.loader import async_get_integration
 
 from .api import KrogerApiClient, KrogerError
 from .application_credentials import KrogerOAuth2Implementation
@@ -48,10 +50,40 @@ class KrogerRuntimeData:
 type KrogerConfigEntry = ConfigEntry[KrogerRuntimeData]
 
 
+CARD_URL_BASE = "/kroger_restock_frontend"
+CARD_FILE = "kroger-restock-card.js"
+CARD_DIR = Path(__file__).parent / "frontend"
+
+
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
-    """Register actions once for the integration."""
+    """Register actions and the scanner card once for the integration."""
     async_setup_services(hass)
+    await _async_register_card(hass)
     return True
+
+
+async def _async_register_card(hass: HomeAssistant) -> None:
+    """Serve the Restock scanner card and load it on every dashboard."""
+    if hass.http is None or not (CARD_DIR / CARD_FILE).is_file():
+        return
+    # Imported here: http/frontend are after_dependencies, absent in some setups.
+    from homeassistant.components import frontend  # noqa: PLC0415
+    from homeassistant.components.http import StaticPathConfig  # noqa: PLC0415
+
+    integration = await async_get_integration(hass, DOMAIN)
+    try:
+        await hass.http.async_register_static_paths(
+            [StaticPathConfig(CARD_URL_BASE, str(CARD_DIR), cache_headers=True)]
+        )
+    except RuntimeError:
+        return  # already registered (integration reloaded)
+    try:
+        # The version busts browser caches after an update.
+        frontend.add_extra_js_url(
+            hass, f"{CARD_URL_BASE}/{CARD_FILE}?v={integration.version}"
+        )
+    except KeyError:
+        _LOGGER.debug("Frontend not loaded; the scanner card isn't registered")
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: KrogerConfigEntry) -> bool:

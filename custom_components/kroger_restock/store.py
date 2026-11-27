@@ -171,6 +171,13 @@ class RestockData:
     # Messages already in the order-email folder when it was linked (never
     # processed): {entry_id, folder, search, keys, count, taken_at}.
     imap_baseline: dict[str, Any] | None = None
+    # Recently scanned/added list items, newest first:
+    # {item_id, at, result, added, quantity, source}. Only things that landed
+    # on the list (no ignored or debounced scans).
+    recent: list[dict[str, Any]] = field(default_factory=list)
+
+
+MAX_RECENT = 25
 
 
 class _VersionedStore(Store[dict[str, Any]]):
@@ -186,6 +193,9 @@ class _VersionedStore(Store[dict[str, Any]]):
             # 1.2 added give_up_snoozed_at to items.
             for item in old_data.get("items", []):
                 item.setdefault("give_up_snoozed_at", None)
+        if old_major_version == 1 and old_minor_version < 6:
+            # 1.6 added the recently scanned list.
+            old_data.setdefault("recent", [])
         if old_major_version == 1 and old_minor_version < 5:
             # 1.5 added the order-email folder baseline.
             old_data.setdefault("imap_baseline", None)
@@ -226,6 +236,7 @@ class RestockStore:
             seen_emails=list(raw.get("seen_emails", [])),
             location_id=raw.get("location_id"),
             imap_baseline=raw.get("imap_baseline"),
+            recent=list(raw.get("recent", [])),
         )
 
     async def async_save(self, data: RestockData) -> None:
@@ -249,4 +260,5 @@ class RestockStore:
             "seen_emails": list(data.seen_emails),
             "location_id": data.location_id,
             "imap_baseline": data.imap_baseline,
+            "recent": list(data.recent),
         }

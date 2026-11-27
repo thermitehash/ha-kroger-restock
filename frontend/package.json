@@ -1,0 +1,23 @@
+{
+  "name": "kroger-restock-card",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Restock scanner card for the Kroger Restock Home Assistant integration (source; the built file is committed under custom_components/kroger_restock/frontend)",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "barcode-detector": "3.2.5",
+    "lit": "3.3.3"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2",
+    "happy-dom": "20.0.11",
+    "typescript": "5.9.3",
+    "vitest": "3.2.4"
+  }
+}

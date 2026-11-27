@@ -77,7 +77,7 @@ from .const import (
 from .links import PRODUCT_ID, product_id_from_text
 from .matching import match_item
 from .schedule import check_spacing, in_order_window, next_window_start, waited_too_long
-from .store import ListItem, RestockData, RestockStore
+from .store import MAX_RECENT, ListItem, RestockData, RestockStore
 
 if TYPE_CHECKING:
     from . import KrogerConfigEntry
@@ -922,11 +922,40 @@ class KrogerRestockCoordinator(DataUpdateCoordinator[RestockData]):
                 already_in_cart,
                 self._process_scan(normalized, digits, quantity, source),
             )
+            self._remember(outcome, source)
             self._changed()
         self._fire(outcome, source)
         response = self._response(outcome, already_in_cart)
         self._notify_scan(response)
         return response
+
+    def _remember(self, outcome: ProcessOutcome, source: ItemSource) -> None:
+        """Put the item at the top of the recently scanned/added list."""
+        item = outcome.item
+        if item not in self.data.items:
+            return
+        recent = [r for r in self.data.recent if r.get("item_id") != item.id]
+        recent.insert(
+            0,
+            {
+                "item_id": item.id,
+                "at": dt_util.utcnow().isoformat(),
+                "result": str(outcome.result),
+                "added": outcome.added,
+                "quantity": item.quantity,
+                "source": str(source),
+            },
+        )
+        self.data.recent = recent[:MAX_RECENT]
+
+    def recent_items(self) -> list[tuple[dict[str, Any], ListItem]]:
+        """Recent entries whose item is still on the list, newest first."""
+        by_id = {item.id: item for item in self.data.items}
+        return [
+            (entry, by_id[entry["item_id"]])
+            for entry in self.data.recent
+            if entry.get("item_id") in by_id
+        ]
 
     async def _recording(self, already_in_cart: bool, coro: Any) -> ProcessOutcome:
         """Run an add/scan/resolve, optionally as "already in the Kroger cart".
@@ -1087,6 +1116,7 @@ class KrogerRestockCoordinator(DataUpdateCoordinator[RestockData]):
             outcome = await self._recording(
                 already_in_cart, self._process_text(name, quantity, source, note)
             )
+            self._remember(outcome, source)
             self._changed()
         self._fire(outcome, source)
         response = self._response(outcome, already_in_cart)

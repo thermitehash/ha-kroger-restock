@@ -38,6 +38,28 @@ jobs:
       - run: ruff format --check .
       - run: ruff check .
 
+  card:
+    name: Scanner card (build, typecheck, tests)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - name: Committed build matches the source
+        run: |
+          git status --porcelain ../custom_components/kroger_restock/frontend
+          test -z "$(git status --porcelain ../custom_components/kroger_restock/frontend)"
+
   esphome:
     name: ESPHome configs
     runs-on: ubuntu-latest

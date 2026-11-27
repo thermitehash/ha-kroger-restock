@@ -34,6 +34,7 @@ scan_upc:
             - esphome
             - manual
             - assist
+            - card
     config_entry_id:
       selector:
         config_entry:
@@ -71,6 +72,7 @@ add_item:
             - esphome
             - manual
             - assist
+            - card
     config_entry_id:
       selector:
         config_entry:

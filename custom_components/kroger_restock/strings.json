@@ -207,7 +207,8 @@
         "shortcut": "iPhone Shortcut",
         "esphome": "ESPHome scanner",
         "manual": "Manual",
-        "assist": "Assist"
+        "assist": "Assist",
+        "card": "Scanner card"
       }
     },
     "paper_width": {
@@ -272,6 +273,9 @@
           "completed": "Completed",
           "cancelled": "Cancelled"
         }
+      },
+      "recent": {
+        "name": "Recently scanned"
       }
     },
     "button": {

@@ -68,7 +68,7 @@ DEFAULT_LEAD_TIME_DAYS: Final = 1
 WEEKDAYS: Final = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
 
 STORAGE_VERSION: Final = 1
-STORAGE_MINOR_VERSION: Final = 5
+STORAGE_MINOR_VERSION: Final = 6
 
 EVENT_SCANNED: Final = f"{DOMAIN}_scanned"
 EVENT_BACK_IN_STOCK: Final = f"{DOMAIN}_back_in_stock"
@@ -153,6 +153,7 @@ class ItemSource(StrEnum):
     ESPHOME = "esphome"
     MANUAL = "manual"
     ASSIST = "assist"
+    CARD = "card"
 
 
 class ScanResult(StrEnum):

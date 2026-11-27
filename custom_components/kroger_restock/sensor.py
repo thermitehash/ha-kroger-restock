@@ -13,15 +13,17 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.util import dt as dt_util
 
 from . import KrogerConfigEntry
-from .const import ItemStatus
+from .const import DOMAIN, ItemStatus
 from .coordinator import KrogerRestockCoordinator
 from .entity import KrogerRestockEntity
 from .order_email import OrderStatus
 from .orders import current_order
+from .todo import item_summary, status_line
 
 PARALLEL_UPDATES = 0
 
@@ -68,6 +70,7 @@ async def async_setup_entry(
         [
             *(KrogerSensor(coordinator, d) for d in SENSORS),
             KrogerOrderSensor(coordinator),
+            KrogerRecentSensor(coordinator),
         ]
     )
 
@@ -154,3 +157,66 @@ class KrogerOrderSensor(KrogerRestockEntity, SensorEntity):
             if order.substitutions is not None:
                 attrs["substitutions"] = order.substitutions
         return attrs
+
+
+class KrogerRecentSensor(KrogerRestockEntity, SensorEntity):
+    """Most recently scanned or added list items (feeds the scanner card)."""
+
+    _attr_translation_key = "recent"
+    _attr_icon = "mdi:barcode-scan"
+    # The list changes with every scan; keep it out of the history database.
+    _unrecorded_attributes = frozenset({"items", "config_entry_id", "todo_entity_id"})
+
+    def __init__(self, coordinator: KrogerRestockCoordinator) -> None:
+        """Initialize."""
+        super().__init__(coordinator, "recent")
+
+    @property
+    def native_value(self) -> str | None:
+        """Return the newest item's summary."""
+        recent = self.coordinator.recent_items()
+        if not recent:
+            return None
+        return item_summary(recent[0][1])[:255]
+
+    @property
+    def extra_state_attributes(self) -> dict[str, object]:
+        """The recent items, newest first, with what the card needs."""
+        coordinator = self.coordinator
+        push_date = coordinator.next_push_date()
+        items = []
+        for entry, item in coordinator.recent_items():
+            added = int(entry.get("added") or 0)
+            items.append(
+                {
+                    "item_id": item.id,
+                    "name": item.name,
+                    "brand": item.brand,
+                    "size": item.size,
+                    "quantity": item.quantity,
+                    "status": str(item.status),
+                    "status_text": status_line(item, push_date),
+                    "aisle": item.aisle_label,
+                    "image_url": item.image_url,
+                    "result": entry.get("result"),
+                    "source": entry.get("source"),
+                    "at": entry.get("at"),
+                    "added": added,
+                    # "Undo +N" is offered while the quantity is unchanged
+                    # since the duplicate scan.
+                    "can_undo": bool(
+                        added
+                        and entry.get("result") == "duplicate"
+                        and item.quantity == entry.get("quantity")
+                        and item.quantity - added >= 1
+                    ),
+                }
+            )
+        todo = er.async_get(self.hass).async_get_entity_id(
+            "todo", DOMAIN, f"{coordinator.config_entry.entry_id}_todo"
+        )
+        return {
+            "items": items,
+            "config_entry_id": coordinator.config_entry.entry_id,
+            "todo_entity_id": todo,
+        }
