@@ -1161,7 +1161,9 @@ async def test_placed_order_is_stock_checked_quietly(
     )
     order = last_order(tracking)
     assert order.stock_checked_at is not None
-    assert order.out_of_stock == [{"item_id": ids[COKE], "name": COKE}]
+    assert order.out_of_stock == [
+        {"item_id": ids[COKE], "name": COKE, "when": "placed"}
+    ]
     coordinator = tracking.runtime_data.coordinator
     coke = coordinator.get_item(ids[COKE])
     assert coke.status is ItemStatus.IN_CART  # the cart can't be changed
@@ -1176,7 +1178,9 @@ async def test_placed_order_is_stock_checked_quietly(
     # Survives a restart.
     await hass.config_entries.async_reload(tracking.entry_id)
     await hass.async_block_till_done()
-    assert last_order(tracking).out_of_stock == [{"item_id": ids[COKE], "name": COKE}]
+    assert last_order(tracking).out_of_stock == [
+        {"item_id": ids[COKE], "name": COKE, "when": "placed"}
+    ]
 
 
 async def test_nothing_out_of_stock_marks_all_received_without_asking(
@@ -1204,7 +1208,7 @@ async def test_nothing_out_of_stock_marks_all_received_without_asking(
     [note] = [c for c in calls if "picked up" in c.data["title"]]
     assert note.data["title"] == "Kroger order picked up"
     assert note.data["message"] == (
-        "2 items marked received. Nothing was out of stock when you ordered."
+        "2 items marked received. Nothing was out of stock when you ordered or at pickup."
     )
     assert "data" not in note.data  # no question, no buttons
 
@@ -1227,7 +1231,7 @@ async def test_one_out_of_stock_item_is_the_only_question(
     [ask] = [c for c in calls if "did these come" in c.data["title"]]
     assert ask.data["title"] == "Kroger order picked up: did these come?"
     assert ask.data["message"] == (
-        f"1 item marked received. {COKE} was out of stock when you ordered. "
+        f"1 item marked received. {COKE} was out of stock when you ordered or at pickup. "
         "Did it come? Anything that didn't come goes back on the list."
     )
     actions = {a["title"]: a["action"] for a in ask.data["data"]["actions"]}
@@ -1283,7 +1287,7 @@ async def test_several_out_of_stock_items_some_missing(
     await pick_up(hass, imap_entry, mailbox)
     [ask] = [c for c in calls if "did these come" in c.data["title"]]
     assert ask.data["message"].startswith(
-        f"0 items marked received. These were out of stock when you ordered: "
+        f"0 items marked received. These were out of stock when you ordered or at pickup: "
         f"{EGGS}, {COKE}. Did they come?"
     )
     actions = {a["title"]: a for a in ask.data["data"]["actions"]}
@@ -1353,3 +1357,154 @@ async def test_with_order_notifications_off_in_stock_items_still_received(
     assert coordinator.get_item(ids[EGGS]).status is ItemStatus.RECEIVED
     assert coordinator.get_item(ids[COKE]).status is ItemStatus.IN_CART  # left as is
     assert calls == []
+
+
+async def test_out_of_stock_at_pickup_only_is_asked(
+    hass: HomeAssistant,
+    tracking: MockConfigEntry,
+    imap_entry: MockConfigEntry,
+    mailbox: dict[str, str],
+    fake_api: FakeKrogerApi,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    ids, calls = await place_order(
+        hass, tracking, imap_entry, mailbox, fake_api, freezer
+    )
+    assert last_order(tracking).out_of_stock == []
+    fake_api.set_stock("0001111000101", "TEMPORARILY_OUT_OF_STOCK")  # sold out later
+    await pick_up(hass, imap_entry, mailbox)
+    coordinator = tracking.runtime_data.coordinator
+    assert coordinator.get_item(ids[EGGS]).status is ItemStatus.IN_CART
+    assert coordinator.get_item(ids[COKE]).status is ItemStatus.RECEIVED
+    order = last_order(tracking)
+    assert order.out_of_stock == [
+        {"item_id": ids[EGGS], "name": EGGS, "when": "completed"}
+    ]
+    assert order.asked == [{"item_id": ids[EGGS], "name": EGGS}]
+    [ask] = [c for c in calls if "did these come" in c.data["title"]]
+    assert (
+        f"{EGGS} was out of stock when you ordered or at pickup." in ask.data["message"]
+    )
+
+
+async def test_out_of_stock_when_placed_but_back_at_pickup_is_still_asked(
+    hass: HomeAssistant,
+    tracking: MockConfigEntry,
+    imap_entry: MockConfigEntry,
+    mailbox: dict[str, str],
+    fake_api: FakeKrogerApi,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    ids, calls = await place_order(
+        hass, tracking, imap_entry, mailbox, fake_api, freezer, out_of_stock=(COKE,)
+    )
+    fake_api.set_stock("0004900002891", "HIGH")  # back by pickup time
+    await pick_up(hass, imap_entry, mailbox)
+    coordinator = tracking.runtime_data.coordinator
+    assert coordinator.get_item(ids[COKE]).status is ItemStatus.IN_CART  # asked
+    assert coordinator.get_item(ids[EGGS]).status is ItemStatus.RECEIVED
+    assert [c for c in calls if "did these come" in c.data["title"]]
+
+
+async def test_out_of_stock_both_times_is_recorded_once(
+    hass: HomeAssistant,
+    tracking: MockConfigEntry,
+    imap_entry: MockConfigEntry,
+    mailbox: dict[str, str],
+    fake_api: FakeKrogerApi,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    ids, _calls = await place_order(
+        hass, tracking, imap_entry, mailbox, fake_api, freezer, out_of_stock=(COKE,)
+    )
+    await pick_up(hass, imap_entry, mailbox)
+    assert last_order(tracking).out_of_stock == [
+        {"item_id": ids[COKE], "name": COKE, "when": "placed+completed"}
+    ]
+
+
+@pytest.mark.usefixtures("no_order_stock_check_at_placement")
+async def test_pickup_check_alone_is_enough(
+    hass: HomeAssistant,
+    tracking: MockConfigEntry,
+    imap_entry: MockConfigEntry,
+    mailbox: dict[str, str],
+    fake_api: FakeKrogerApi,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    """Confirmation email missed: the pickup check still drives the question."""
+    ids, calls = await place_order(
+        hass, tracking, imap_entry, mailbox, fake_api, freezer, out_of_stock=(COKE,)
+    )
+    assert last_order(tracking).stock_checked_at is None
+    await pick_up(hass, imap_entry, mailbox)
+    coordinator = tracking.runtime_data.coordinator
+    assert coordinator.get_item(ids[EGGS]).status is ItemStatus.RECEIVED
+    assert coordinator.get_item(ids[COKE]).status is ItemStatus.IN_CART
+    [ask] = [c for c in calls if "did these come" in c.data["title"]]
+    assert COKE in ask.data["message"]
+
+
+@pytest.fixture
+def no_order_stock_check_at_placement() -> Generator[None]:
+    original = OrderWatcher.async_check_order_stock
+
+    async def only_at_completion(self, order, when="placed"):  # type: ignore[no-untyped-def]
+        if when == "completed":
+            await original(self, order, when)
+
+    with patch.object(OrderWatcher, "async_check_order_stock", only_at_completion):
+        yield
+
+
+async def test_item_that_couldnt_be_checked_is_asked(
+    hass: HomeAssistant,
+    tracking: MockConfigEntry,
+    imap_entry: MockConfigEntry,
+    mailbox: dict[str, str],
+    fake_api: FakeKrogerApi,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    ids, calls = await place_order(
+        hass, tracking, imap_entry, mailbox, fake_api, freezer
+    )
+    coordinator = tracking.runtime_data.coordinator
+    # Pretend the placement check never read the eggs, and they've left the
+    # catalog by pickup (lookup returns nothing).
+    last_order(tracking).stock_checked_items = [ids[COKE]]
+    fake_api.products.pop("0001111000101")
+    coordinator._product_cache.clear()
+    await pick_up(hass, imap_entry, mailbox)
+    assert coordinator.get_item(ids[EGGS]).status is ItemStatus.IN_CART
+    assert coordinator.get_item(ids[COKE]).status is ItemStatus.RECEIVED
+    [ask] = [c for c in calls if "did these come" in c.data["title"]]
+    assert "was out of stock (or couldn't be checked)" in ask.data["message"]
+
+
+async def test_no_check_could_read_anything_asks_about_everything(
+    hass: HomeAssistant,
+    tracking: MockConfigEntry,
+    imap_entry: MockConfigEntry,
+    mailbox: dict[str, str],
+    fake_api: FakeKrogerApi,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    from custom_components.kroger_restock.api import KrogerConnectionError
+
+    ids, calls = await place_order(
+        hass, tracking, imap_entry, mailbox, fake_api, freezer
+    )
+    last_order(tracking).stock_checked_items = []
+
+    async def unreachable(*_args: Any) -> None:
+        raise KrogerConnectionError("down")
+
+    fake_api.async_get_product = unreachable  # type: ignore[method-assign]
+    tracking.runtime_data.coordinator._product_cache.clear()
+    await pick_up(hass, imap_entry, mailbox)
+    coordinator = tracking.runtime_data.coordinator
+    assert all(
+        coordinator.get_item(i).status is ItemStatus.IN_CART for i in ids.values()
+    )
+    [ask] = [c for c in calls if "picked up" in c.data["title"]]
+    assert ask.data["message"].startswith("Mark the 2 in-cart items received?")

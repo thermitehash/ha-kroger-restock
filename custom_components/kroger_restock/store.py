@@ -123,11 +123,16 @@ class KrogerOrder:
     total: float | None = None
     fee: float | None = None
     completed_at: datetime | None = None
-    # When the order was placed, its in-cart items were checked for stock
-    # (None = no check ran, e.g. the confirmation email was missed).
+    # The order's in-cart items are stock-checked when it's placed and again
+    # when it's picked up/delivered. Last check (None = none ran yet).
     stock_checked_at: datetime | None = None
-    # Items that were out of stock at that check: [{item_id, name}].
+    # Items out of stock at either check: [{item_id, name, when}], where
+    # when is "placed", "completed" or "placed+completed".
     out_of_stock: list[dict[str, str]] = field(default_factory=list)
+    # Items at least one check could read (IDs).
+    stock_checked_items: list[str] = field(default_factory=list)
+    # Items the pickup/delivery question asked about: [{item_id, name}].
+    asked: list[dict[str, str]] = field(default_factory=list)
 
     _DATETIMES = (
         "updated_at",

@@ -293,8 +293,8 @@ class OrderWatcher:
             await self.coordinator.async_mark_cart_received(before=cutoff)
             return
         if choice == CHOICE_NONE:
-            # None of the items that were out of stock at order time came.
-            ids = [o["item_id"] for o in (order.out_of_stock if order else [])]
+            # None of the items the question asked about came.
+            ids = [o["item_id"] for o in (order.asked if order else [])]
             result = await self.coordinator.async_mark_cart_received(
                 before=cutoff, missing=ids
             )
@@ -602,14 +602,32 @@ class OrderWatcher:
             )
         return order
 
-    async def async_check_order_stock(self, order: KrogerOrder) -> None:
-        """Record which of an order's in-cart items are out of stock."""
-        result = await self.coordinator.async_check_order_stock(before=order.placed_at)
+    async def async_check_order_stock(
+        self, order: KrogerOrder, when: str = "placed"
+    ) -> None:
+        """Check the order's in-cart items and add any out-of-stock ones.
+
+        Runs when the order is placed and again when it's picked up or
+        delivered; an item out of stock at either time stays recorded.
+        """
+        result = await self.coordinator.async_check_order_stock(
+            before=order.placed_at or order.completed_at
+        )
         order.stock_checked_at = dt_util.utcnow()
-        order.out_of_stock = result["out_of_stock"]
+        order.stock_checked_items = list(
+            dict.fromkeys([*order.stock_checked_items, *result["checked_ids"]])
+        )
+        known = {o["item_id"]: o for o in order.out_of_stock}
+        for out in result["out_of_stock"]:
+            if (entry := known.get(out["item_id"])) is not None:
+                if when not in entry["when"].split("+"):
+                    entry["when"] = f"{entry['when']}+{when}"
+            else:
+                order.out_of_stock = [*order.out_of_stock, {**out, "when": when}]
         _LOGGER.info(
-            "Order %s: checked %d in-cart items, %d out of stock",
+            "Order %s (%s): checked %d in-cart items, %d out of stock",
             order.order_number,
+            when,
             result["checked"],
             len(result["out_of_stock"]),
         )
@@ -673,51 +691,59 @@ class OrderWatcher:
     async def _order_completed(self, order: KrogerOrder, *, notify: bool) -> None:
         """Settle the order's in-cart items once it's picked up or delivered.
 
-        When the items were stock-checked as the order was placed, the ones
-        that were in stock are marked received, and the user is asked only
-        about the ones that were out of stock. Without that check (e.g. the
-        confirmation email was missed), the user is asked about everything.
+        Stock is checked again now. Items that were out of stock when the order
+        was placed or now, or that neither check could read, are asked about;
+        everything else is marked received. If no check could read anything
+        (e.g. Kroger was unreachable both times), the user is asked about all
+        of it.
         """
         cutoff = order.placed_at or order.completed_at
+        if not self.coordinator.in_cart_items(before=cutoff):
+            return
+        await self.async_check_order_stock(order, "completed")
         items = self.coordinator.in_cart_items(before=cutoff)
         if not items:
             return
-        if order.stock_checked_at is None:
+        checked = set(order.stock_checked_items)
+        if not checked & {i.id for i in items}:
             if notify:
                 await self._notify_completed(order, len(items))
             return
-        in_order = {i.id: i for i in items}
-        risky = [
-            in_order[o["item_id"]]
-            for o in order.out_of_stock
-            if o["item_id"] in in_order
-        ]
+        out_ids = {o["item_id"] for o in order.out_of_stock}
+        risky = [i for i in items if i.id in out_ids or i.id not in checked]
+        unchecked = any(i.id not in checked for i in risky)
+        order.asked = [{"item_id": i.id, "name": i.name} for i in risky]
+        self.coordinator.mark_changed()
         result = await self.coordinator.async_mark_cart_received(
             before=cutoff, exclude=[i.id for i in risky]
         )
         if not notify:
             return
         verb = "delivered" if order.modality == "delivery" else "picked up"
+        moment = "delivery" if order.modality == "delivery" else "pickup"
         received = result["received"]
         done = f"{received} {'item' if received == 1 else 'items'} marked received."
         if not risky:
             await self.coordinator.async_notify(
                 f"Kroger order {verb}",
-                f"{done} Nothing was out of stock when you ordered.",
+                f"{done} Nothing was out of stock when you ordered or at {moment}.",
             )
             return
         names = ", ".join(i.name for i in risky)
+        reason = (
+            "were out of stock (or couldn't be checked)"
+            if unchecked
+            else f"were out of stock when you ordered or at {moment}"
+        )
         action = f"{self._action_id}_{order.order_number}"
         if len(risky) == 1:
-            question = f"{names} was out of stock when you ordered. Did it come?"
+            question = f"{names} {reason.replace('were', 'was', 1)}. Did it come?"
             actions = [
                 {"action": f"{action}_{CHOICE_ALL}", "title": "Yes, it came"},
                 {"action": f"{action}_{CHOICE_NONE}", "title": "No"},
             ]
         else:
-            question = (
-                f"These were out of stock when you ordered: {names}. Did they come?"
-            )
+            question = f"These {reason}: {names}. Did they come?"
             actions = [
                 {"action": f"{action}_{CHOICE_ALL}", "title": "All came"},
                 {"action": f"{action}_{CHOICE_NONE}", "title": "None came"},

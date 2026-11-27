@@ -315,6 +315,7 @@ class KrogerRestockCoordinator(DataUpdateCoordinator[RestockData]):
         stock level is updated, and the out-of-stock ones are returned.
         """
         out: list[dict[str, str]] = []
+        checked_ids: list[str] = []
         errors = 0
         checked = 0
         for item in self.in_cart_items(before):
@@ -332,12 +333,18 @@ class KrogerRestockCoordinator(DataUpdateCoordinator[RestockData]):
                 item.last_stock_check = dt_util.utcnow()
                 if product is None:
                     continue
+                checked_ids.append(item.id)
                 item.stock_level = product.stock_level
                 if not product.in_stock:
                     out.append({"item_id": item.id, "name": item.name})
         if checked:
             self._changed()
-        return {"checked": checked, "out_of_stock": out, "errors": errors}
+        return {
+            "checked": checked,
+            "checked_ids": checked_ids,
+            "out_of_stock": out,
+            "errors": errors,
+        }
 
     async def async_mark_cart_received(
         self,

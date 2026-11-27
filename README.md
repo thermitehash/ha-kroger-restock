@@ -501,15 +501,17 @@ at every start; that's expected and ignored.)
 4. In **Kroger Restock → Configure → Order tracking**, pick that connection.
    Each choice is shown as *"<name> — folder: … · search: …"*. If the one you
    pick searches `UnSeen` or watches INBOX, you'll get a warning first.
-   - **Stock check when you order:** when the order-confirmation email
-     arrives, every in-cart item in that order is checked for stock at your
-     store, quietly (no notification, nothing changed in the cart). An item
-     that has sold out shows **In cart · out of stock now** on the list and in
-     the scanner card.
-   - **When the order is picked up / delivered** (receipt email), the items
-     that were in stock are marked received automatically, and you're asked
-     only about the ones that were out of stock: *"Large Eggs was out of stock
-     when you ordered. Did it come?"*
+   - **Stock checks at order time and at pickup:** every in-cart item in the
+     order is checked for stock at your store twice: when the
+     order-confirmation email arrives, and again when the receipt email
+     (picked up / delivered) arrives. Both checks are quiet (no notification,
+     nothing changed in the cart). An item that has sold out shows **In cart ·
+     out of stock now** on the list and in the scanner card.
+   - **When the order is picked up / delivered**, the items that were in
+     stock both times are marked received automatically, and you're asked
+     only about the ones that were out of stock **at either check** (or that
+     neither check could read): *"Large Eggs was out of stock when you ordered
+     or at pickup. Did it come?"*
      - One item: **Yes, it came** / **No**.
      - Several: **All came** / **None came** / **Some missing…** (type which
        didn't come).
@@ -521,9 +523,12 @@ at every start; that's expected and ignored.)
        marked received, and out-of-stock ones stay in the cart for you to
        check off.
    - **Notify on order updates** (on by default): ready for pickup, cancelled,
-     and order picked up / delivered as above. If the stock check didn't run
-     (for example the confirmation email was missed), the pickup notification
-     asks about everything instead: *"Mark the N in-cart items received?"*,
+     and order picked up / delivered as above. If the confirmation email was
+     missed, the pickup check alone decides. If no check could run, the pickup
+     notification
+     asks about everything instead (this happens only if neither check
+     could read any item, e.g. Kroger was unreachable both times): *"Mark the
+     N in-cart items received?"*,
      with three buttons:
      - **All received:** marks every in-cart item received.
      - **Some missing…:** type what didn't come (e.g. `eggs, milk`). Those
@@ -947,6 +952,7 @@ These come from Kroger's public API:
 | Fix pop-up: pick from 5 matches, search, remove | New in v0.14.0; unit tests plus Chromium check; not yet live |
 | Fix button with count, greyed when nothing to fix | New in v0.15.0; unit tests plus Chromium check; not yet live |
 | Stock check at order time; ask only about out-of-stock items at pickup | New in v0.16.0; tested with sample order emails; not yet live |
+| Second stock check at pickup/delivery; ask about items out at either check | New in v0.17.0; tested with sample order emails; not yet live |
 | Shortcut Perform Action returning response data | **Verified live** (HA iOS app: the `scan_upc` response JSON reached the Shortcut) |
 | Whether the cart accepts an out-of-stock UPC | Unknown (`tests/test_live_cart.py`, run locally). The integration never pushes out-of-stock items either way |
 | Refresh-token lifetime | Unknown |
