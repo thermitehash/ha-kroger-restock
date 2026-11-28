@@ -72,6 +72,8 @@ class ListItem:
     # Last time a kroger_restock_received event was fired for this item; units
     # pushed before then were already reported.
     received_reported_at: datetime | None = None
+    # The Kroger order number this item was part of, once known.
+    order_ref: str | None = None
 
     @property
     def active(self) -> bool:
@@ -121,12 +123,24 @@ class KrogerOrder:
     # None = no email so far contained this information (unknown).
     shorted: list[str] | None = None
     substitutions: list[str] | None = None
-    last_subject: str | None = None
+    # Which kind of email last updated the order ("placed", "ready",
+    # "completed", ...). Subjects are never stored: they contain names.
+    last_email: str | None = None
     history: list[dict[str, str]] = field(default_factory=list)
     item_count: int | None = None
     total: float | None = None
     fee: float | None = None
+    subtotal: float | None = None
+    savings: float | None = None
+    tax: float | None = None
     completed_at: datetime | None = None
+    # Reconciliation, set when the confirmation (with its item count) arrives:
+    # units Kroger Restock had pushed for this order, and the rest of the
+    # order's items, which were added in the Kroger app.
+    tracked_units: int | None = None
+    untracked_count: int | None = None
+    # When the untracked-items event/notification went out (once per order).
+    untracked_reported_at: datetime | None = None
     # The order's in-cart items are stock-checked when it's placed and again
     # when it's picked up/delivered. Last check (None = none ran yet).
     stock_checked_at: datetime | None = None
@@ -141,6 +155,7 @@ class KrogerOrder:
     _DATETIMES = (
         "updated_at",
         "stock_checked_at",
+        "untracked_reported_at",
         "placed_at",
         "window_start",
         "window_end",
@@ -214,6 +229,10 @@ class _VersionedStore(Store[dict[str, Any]]):
             # 1.2 added give_up_snoozed_at to items.
             for item in old_data.get("items", []):
                 item.setdefault("give_up_snoozed_at", None)
+        if old_major_version == 1 and old_minor_version < 8:
+            # 1.8 stops storing email subjects (they contain first names).
+            for order in old_data.get("orders", []):
+                order.pop("last_subject", None)
         if old_major_version == 1 and old_minor_version < 7:
             # 1.7 added the product lookup cache and the received log.
             old_data.setdefault("lookup_cache", {})

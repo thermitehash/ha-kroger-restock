@@ -102,6 +102,11 @@ async def async_take_baseline(entry_id: str, entry_data: Mapping[str, Any]) -> B
     keys: set[str] = set()
     count = 0
     try:
+        # Re-open the folder read-only (EXAMINE): nothing here can change the
+        # mailbox. Headers are fetched with BODY.PEEK, so nothing is marked read.
+        examined = await client.examine(folder)
+        if examined.result != "OK":
+            raise BaselineError(f"Opening folder {folder!r} failed: {examined.result}")
         result, lines = await client.search(search, charset=charset)
         if result != "OK":
             raise BaselineError(f"Search {search!r} failed: {result}")

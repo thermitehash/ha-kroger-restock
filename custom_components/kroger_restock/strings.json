@@ -276,6 +276,10 @@
       },
       "recent": {
         "name": "Recently scanned"
+      },
+      "untracked_items": {
+        "name": "Untracked items in last order",
+        "unit_of_measurement": "items"
       }
     },
     "button": {

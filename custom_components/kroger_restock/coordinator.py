@@ -320,6 +320,18 @@ class KrogerRestockCoordinator(DataUpdateCoordinator[RestockData]):
             and (before is None or (i.cart_pushed_at and i.cart_pushed_at <= before))
         ]
 
+    def tracked_units(self, before: datetime | None) -> list[ListItem]:
+        """Items Kroger Restock put in the cart before an order was placed."""
+        return [
+            i
+            for i in self.data.items
+            if i.status
+            in (ItemStatus.IN_CART, ItemStatus.CHECK_CART, ItemStatus.PUSHING)
+            and i.pushed_quantity > 0
+            and i.cart_pushed_at is not None
+            and (before is None or i.cart_pushed_at <= before)
+        ]
+
     async def async_check_order_stock(
         self, before: datetime | None = None
     ) -> dict[str, Any]:
@@ -444,7 +456,7 @@ class KrogerRestockCoordinator(DataUpdateCoordinator[RestockData]):
                 "quantity_received": item.pushed_quantity,
                 "price": item.price,
                 "received_at": (item.received_at or now).isoformat(),
-                "order_ref": order_ref,
+                "order_ref": order_ref or item.order_ref,
                 "config_entry_id": self.config_entry.entry_id,
             }
             self.data.received_log = [*self.data.received_log, payload][
@@ -472,7 +484,22 @@ class KrogerRestockCoordinator(DataUpdateCoordinator[RestockData]):
             if (at := dt_util.parse_datetime(str(e.get("received_at"))))
             and at >= cutoff
         ]
-        return {"days": days, "items": items}
+        untracked = [
+            {
+                "order_ref": o.order_number,
+                "untracked_count": o.untracked_count,
+                "pickup_window": o.window,
+                "received_at": o.completed_at.isoformat() if o.completed_at else None,
+            }
+            for o in self.data.orders
+            if o.untracked_count and o.completed_at and o.completed_at >= cutoff
+        ]
+        return {
+            "days": days,
+            "items": items,
+            "untracked_count": sum(o["untracked_count"] for o in untracked),
+            "untracked_orders": untracked,
+        }
 
     async def async_lookup_product(
         self, upc: str | None = None, product_id: str | None = None

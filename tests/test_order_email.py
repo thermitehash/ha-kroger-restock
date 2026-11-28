@@ -246,3 +246,30 @@ def test_html_to_lines_drops_style_and_collapses_blanks() -> None:
 )
 def test_is_kroger_sender(sender: str, extra: tuple[str, ...], expected: bool) -> None:
     assert is_kroger_sender(sender, extra) is expected
+
+
+def test_three_kroger_email_shapes() -> None:
+    """Confirmed, ready, final receipt: what each gives (and doesn't)."""
+    confirmed = parse_order_email(SUBJECTS["confirmed"], CONFIRMED_TEXT)
+    assert confirmed.status == OrderStatus.PLACED
+    assert confirmed.order_number == "1111222233334444555"  # 19 digits
+    assert confirmed.item_count == 12
+    assert confirmed.window == "Mar 4, 2027 4:00pm–5:00pm"
+    assert (confirmed.subtotal, confirmed.savings, confirmed.tax, confirmed.total) == (
+        50.0,
+        2.5,
+        1.25,
+        48.75,
+    )
+    ready = parse_order_email(SUBJECTS["ready"], READY_TEXT)
+    assert ready.status == OrderStatus.READY
+    assert ready.order_number == "1111222233334444555"
+    assert ready.window is not None
+    assert ready.item_count is None
+    receipt = parse_order_email(SUBJECTS["receipt"], RECEIPT_TEXT)
+    assert receipt.status == OrderStatus.COMPLETED
+    assert (receipt.order_number, receipt.item_count, receipt.total) == (
+        None,
+        None,
+        None,
+    )

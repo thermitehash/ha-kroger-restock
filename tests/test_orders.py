@@ -133,8 +133,13 @@ def header_block(message_id: str, subject: str, when: datetime) -> bytes:
 class FakeImapClient:
     """Answers SEARCH and header FETCH like aioimaplib does."""
 
-    def __init__(self, messages: list[bytes]) -> None:
+    def __init__(self, messages: list[bytes], log: list[str] | None = None) -> None:
         self.messages = messages
+        self.log = log if log is not None else []
+
+    async def examine(self, folder: str) -> Response:
+        self.log.append(f"EXAMINE {folder}")
+        return Response("OK", [b"[READ-ONLY] EXAMINE completed"])
 
     async def search(self, search: str, charset: str = "utf-8") -> Response:
         if not self.messages:
@@ -162,13 +167,15 @@ class FakeImapClient:
 @pytest.fixture(autouse=True)
 def imap_server() -> Generator[dict[str, Any]]:
     """Fake mailbox per IMAP folder; records connections."""
-    server: dict[str, Any] = {"folders": {}, "connects": 0, "fail": None}
+    server: dict[str, Any] = {"folders": {}, "connects": 0, "fail": None, "log": []}
 
     async def connect(entry_data: Any) -> FakeImapClient:
         server["connects"] += 1
         if server["fail"] is not None:
             raise server["fail"]
-        return FakeImapClient(server["folders"].get(entry_data.get("folder"), []))
+        return FakeImapClient(
+            server["folders"].get(entry_data.get("folder"), []), server["log"]
+        )
 
     with patch(
         "custom_components.kroger_restock.imap_baseline.async_connect",
@@ -244,7 +251,8 @@ async def test_order_lifecycle(
     await deliver(hass, imap_entry, mailbox, SUBJECTS["ready"], READY_HTML)
     state = hass.states.get(SENSOR)
     assert state.state == "ready"
-    assert state.attributes["window"] == "Today 4:00pm–5:00pm"
+    # The dated label from the confirmation is kept ("Today …" goes stale).
+    assert state.attributes["window"] == "Mar 4, 2027 4:00pm–5:00pm"
     assert state.attributes["item_count"] == 12  # kept from the confirmation
 
     # The receipt has no order number; it completes the active order.
@@ -663,7 +671,9 @@ async def test_completed_order_asks_to_mark_received(
     assert all(
         coordinator.get_item(i).status is ItemStatus.IN_CART for i in ids.values()
     )
-    # ...the user is asked instead, with a button.
+    # ...the user is asked instead, with a button. (The sample order has 12
+    # items and 2 were pushed, so an "items to scan" notice also goes out.)
+    calls = [c for c in calls if c.data["title"] != "Kroger order: items to scan"]
     assert len(calls) == 1
     assert calls[0].data["title"] == "Kroger order picked up"
     assert calls[0].data["message"].startswith("Mark the 2 in-cart items received?")
@@ -1537,3 +1547,236 @@ async def test_received_event_carries_the_order_number(
     await hass.async_block_till_done()
     assert [e.data["item_id"] for e in events] == [ids[EGGS], ids[COKE]]
     assert events[1].data["order_ref"] == order.order_number
+
+
+# ---------------------------------------------------------------------------
+# Items added in the Kroger app: reconcile the order's item count with what
+# Kroger Restock pushed, then ask the user to scan the rest.
+
+
+def test_untracked_count_math() -> None:
+    from custom_components.kroger_restock.orders import untracked_count
+
+    assert untracked_count(47, 35) == 12
+    assert untracked_count(12, 12) == 0
+    assert untracked_count(30, 35) == 0  # removed in the app / shorted: not negative
+
+
+async def order_of_47_with_35_pushed(
+    hass: HomeAssistant,
+    tracking: MockConfigEntry,
+    imap_entry: MockConfigEntry,
+    mailbox: dict[str, str],
+    fake_api: FakeKrogerApi,
+    freezer: FrozenDateTimeFactory,
+) -> tuple[dict[str, str], list[ServiceCall]]:
+    calls = async_mock_service(hass, "notify", "mobile_app_pixel")
+    await set_options(hass, tracking, notify_targets=["notify.mobile_app_pixel"])
+    ids = await setup_cart(hass, fake_api)  # 2 units
+    fake_api.add(make_product("0007800000123", "Sparkling Water"))
+    water = await hass.services.async_call(
+        DOMAIN,
+        "scan_upc",
+        {"product_id": "0007800000123", "quantity": 33},
+        blocking=True,
+        return_response=True,
+    )
+    ids["water"] = water["item_id"]
+    freezer.tick(timedelta(minutes=1))
+    calls.clear()
+    text = CONFIRMED_TEXT.replace("NUMBER OF ITEMS: 12", "NUMBER OF ITEMS: 47")
+    await deliver(hass, imap_entry, mailbox, SUBJECTS["confirmed"], text)
+    await hass.async_block_till_done()
+    return ids, calls
+
+
+async def test_untracked_items_reconciled_when_order_is_placed(
+    hass: HomeAssistant,
+    tracking: MockConfigEntry,
+    imap_entry: MockConfigEntry,
+    mailbox: dict[str, str],
+    fake_api: FakeKrogerApi,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    ids, calls = await order_of_47_with_35_pushed(
+        hass, tracking, imap_entry, mailbox, fake_api, freezer
+    )
+    order = last_order(tracking)
+    assert (order.item_count, order.tracked_units, order.untracked_count) == (
+        47,
+        35,
+        12,
+    )
+    # The pushed items are linked to the real order number.
+    coordinator = tracking.runtime_data.coordinator
+    assert {coordinator.get_item(i).order_ref for i in ids.values()} == {
+        order.order_number
+    }
+    state = hass.states.get("sensor.kroger_test_store_untracked_items_in_last_order")
+    assert state.state == "12"
+    assert state.attributes["order_ref"] == order.order_number
+    assert state.attributes["item_count"] == 47
+    assert state.attributes["tracked_units"] == 35
+    assert state.attributes["pickup_window"] == "Mar 4, 2027 4:00pm–5:00pm"
+    # Nothing is said until the order is picked up.
+    assert [c for c in calls if c.data["title"] == "Kroger order: items to scan"] == []
+
+
+async def test_untracked_items_event_and_notification_at_pickup(
+    hass: HomeAssistant,
+    tracking: MockConfigEntry,
+    imap_entry: MockConfigEntry,
+    mailbox: dict[str, str],
+    fake_api: FakeKrogerApi,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    from pytest_homeassistant_custom_component.common import async_capture_events
+
+    ids, calls = await order_of_47_with_35_pushed(
+        hass, tracking, imap_entry, mailbox, fake_api, freezer
+    )
+    untracked = async_capture_events(hass, f"{DOMAIN}_untracked_items")
+    received = async_capture_events(hass, f"{DOMAIN}_received")
+    await pick_up(hass, imap_entry, mailbox)
+    order = last_order(tracking)
+    # Final Receipt marks the pushed items received automatically...
+    coordinator = tracking.runtime_data.coordinator
+    assert all(
+        coordinator.get_item(i).status is ItemStatus.RECEIVED for i in ids.values()
+    )
+    assert sum(e.data["quantity_received"] for e in received) == 35
+    assert {e.data["order_ref"] for e in received} == {order.order_number}
+    # ...and reports the 12 that came from the Kroger app.
+    [event] = untracked
+    assert event.data == {
+        "order_ref": order.order_number,
+        "untracked_count": 12,
+        "pickup_window": "Mar 4, 2027 4:00pm–5:00pm",
+        "received_at": order.completed_at.isoformat(),
+        "config_entry_id": tracking.entry_id,
+    }
+    [note] = [c for c in calls if c.data["title"] == "Kroger order: items to scan"]
+    assert note.data["message"] == (
+        "12 items in your Kroger order weren't added through Home Assistant. "
+        "Scan them when you unload to add them to the pantry."
+    )
+    # In recent_received for consumers catching up.
+    recent = await hass.services.async_call(
+        DOMAIN, "recent_received", {}, blocking=True, return_response=True
+    )
+    assert recent["untracked_count"] == 12
+    assert recent["untracked_orders"] == [
+        {
+            "order_ref": order.order_number,
+            "untracked_count": 12,
+            "pickup_window": "Mar 4, 2027 4:00pm–5:00pm",
+            "received_at": order.completed_at.isoformat(),
+        }
+    ]
+    # The same receipt again (another folder, a restart) doesn't repeat it.
+    await deliver(
+        hass, imap_entry, mailbox, SUBJECTS["receipt"], RECEIPT_TEXT, message_id="<x@y>"
+    )
+    assert len(untracked) == 1
+
+
+async def test_fully_tracked_order_says_nothing_extra(
+    hass: HomeAssistant,
+    tracking: MockConfigEntry,
+    imap_entry: MockConfigEntry,
+    mailbox: dict[str, str],
+    fake_api: FakeKrogerApi,
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    from pytest_homeassistant_custom_component.common import async_capture_events
+
+    calls = async_mock_service(hass, "notify", "mobile_app_pixel")
+    await set_options(hass, tracking, notify_targets=["notify.mobile_app_pixel"])
+    await setup_cart(hass, fake_api)
+    freezer.tick(timedelta(minutes=1))
+    untracked = async_capture_events(hass, f"{DOMAIN}_untracked_items")
+    text = CONFIRMED_TEXT.replace("NUMBER OF ITEMS: 12", "NUMBER OF ITEMS: 2")
+    await deliver(hass, imap_entry, mailbox, SUBJECTS["confirmed"], text)
+    await pick_up(hass, imap_entry, mailbox)
+    assert last_order(tracking).untracked_count == 0
+    assert untracked == []
+    assert not [c for c in calls if c.data["title"] == "Kroger order: items to scan"]
+    state = hass.states.get("sensor.kroger_test_store_untracked_items_in_last_order")
+    assert state.state == "0"
+
+
+async def test_order_mail_is_read_from_a_read_only_folder(
+    hass: HomeAssistant,
+    tracking: MockConfigEntry,
+    imap_server: dict[str, Any],
+) -> None:
+    assert "EXAMINE Kroger" in imap_server["log"]
+
+
+async def test_order_tracking_stores_and_logs_no_names_or_subjects(
+    hass: HomeAssistant,
+    tracking: MockConfigEntry,
+    imap_entry: MockConfigEntry,
+    mailbox: dict[str, str],
+    fake_api: FakeKrogerApi,
+    freezer: FrozenDateTimeFactory,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    import json as _json
+    import logging
+
+    from pytest_homeassistant_custom_component.common import async_capture_events
+
+    from custom_components.kroger_restock.store import KrogerOrder
+
+    caplog.set_level(logging.DEBUG, logger="custom_components.kroger_restock")
+    updates = async_capture_events(hass, f"{DOMAIN}_order_update")
+    await order_of_47_with_35_pushed(
+        hass, tracking, imap_entry, mailbox, fake_api, freezer
+    )
+    await pick_up(hass, imap_entry, mailbox)
+    order = last_order(tracking)
+    stored = order.as_dict()
+    assert set(stored) == {f.name for f in KrogerOrder.__dataclass_fields__.values()}
+    assert "last_subject" not in stored
+    assert stored["last_email"] == "completed"
+    # The subjects carry first names (and a store address); none of it is kept.
+    blob = _json.dumps(
+        [
+            stored,
+            [e.data for e in updates],
+            tracking.runtime_data.coordinator.data.recent,
+        ]
+    )
+    for secret in ("Alex", "Main St", "Here’s Your Final Receipt"):
+        assert secret not in blob
+        assert secret not in caplog.text
+    assert all("subject" not in e.data for e in updates)
+    sensor = hass.states.get("sensor.kroger_test_store_kroger_order")
+    assert "Alex" not in _json.dumps(dict(sensor.attributes), default=str)
+
+
+async def test_old_stored_subjects_are_dropped(
+    hass: HomeAssistant, hass_storage
+) -> None:
+    from custom_components.kroger_restock.store import RestockStore
+
+    hass_storage["kroger_restock.migrate8"] = {
+        "version": 1,
+        "minor_version": 7,
+        "key": "kroger_restock.migrate8",
+        "data": {
+            "items": [],
+            "orders": [
+                {
+                    "order_number": "1",
+                    "status": "placed",
+                    "updated_at": "2026-11-20T00:00:00+00:00",
+                    "last_subject": "Pickup Order Confirmed, Alex",
+                }
+            ],
+        },
+    }
+    data = await RestockStore(hass, "migrate8").async_load()
+    assert data.orders[0].last_email is None
+    assert "last_subject" not in data.orders[0].as_dict()

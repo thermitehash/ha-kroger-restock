@@ -232,6 +232,7 @@ then items with no location ("Other").
 | `sensor.<store>_unmatched` | Number of unknown barcodes |
 | `sensor.<store>_last_stock_check` | When stock was last checked |
 | `sensor.<store>_kroger_order` | Current order status, from order emails (see [Order tracking](#order-tracking-from-emails)) |
+| `sensor.<store>_untracked_items_in_last_order` | Items in the last confirmed order that weren't added through Home Assistant (see [Items added in the Kroger app](#items-added-in-the-kroger-app)) |
 | `button.<store>_sync_now` | Push any pending cart items |
 | `button.<store>_check_stock_now` | Re-check waiting items now |
 | `button.<store>_print_receipt` | Print to the receipt printer |
@@ -409,8 +410,11 @@ images:                     # best front picture first, largest first
 
 The items marked received in the last `days` days (1-14, default 14), newest
 first, each with the same data as the
-[`kroger_restock_received`](#kroger_restock_received) event. For an app that
-was offline when the events fired. Response only.
+[`kroger_restock_received`](#kroger_restock_received) event, plus
+`untracked_count` (items in those orders that weren't added through Home
+Assistant) and `untracked_orders` (`order_ref`, `untracked_count`,
+`pickup_window`, `received_at`). For an app that was offline when the events
+fired. Response only.
 
 ### `kroger_restock.cart_check`
 
@@ -637,22 +641,59 @@ goes back to `none`.
 Attributes: `order_number`, `window` (e.g. `Mar 4, 2027 4:00pm–5:00pm`),
 `window_start` / `window_end` (timestamps; the email's store-local times are
 read in Home Assistant's time zone), `modality` (`pickup`/`delivery`),
-`item_count`, `total` (estimated), `fee` (the actual fee: a struck-through
-`$4.95 $0.00` reads as 0.00), `placed`, `completed`, `updated`,
-`last_email`, and `recent_orders`.
+`item_count`, `subtotal`, `savings`, `tax`, `total` (estimated), `fee` (the
+actual fee: a struck-through `$4.95 $0.00` reads as 0.00), `placed`,
+`completed`, `updated`, `last_email` (which kind of email last updated it:
+`placed`, `ready`, `completed`, …), `untracked_items`, and `recent_orders`.
+A dated window from the confirmation is kept when the ready email only says
+"Today …".
 
 `shorted_items` and `substitutions` are **absent** unless an email actually
 contained that information (absent = unknown; an empty list = none).
 
-Delivery addresses are never stored or logged.
+**What's kept from order emails:** order number, item count, pickup or
+delivery window, subtotal, savings, tax, total, fee, and which kind of email
+it was (confirmed / ready / final receipt). Subjects aren't stored or logged
+(they contain first names, and the ready email the store address), nor are
+delivery addresses. To recognize an email already seen, only a hash of
+sender, subject and date (and the Message-ID) is kept. Mail is read with
+`BODY.PEEK` (nothing is marked read), and Kroger Restock opens the folder
+read-only (`EXAMINE`); Home Assistant's IMAP integration does the rest.
+
+### Items added in the Kroger app
+
+Kroger's emails never list items, and Kroger's API has no order history, so
+items added in the Kroger app (by you or anyone else on the account) can't
+be identified. Their **number** can: the confirmation email says how many
+items the order has.
+
+- When the confirmation arrives, Kroger Restock counts the units it pushed to
+  the cart for that order. The rest are **untracked**: e.g. 47 items in the
+  order, 35 pushed → **12 untracked**. The pushed items are linked to the
+  order number at the same time.
+- `sensor.<store>_untracked_items_in_last_order` shows that count (attributes:
+  `order_ref`, `item_count`, `tracked_units`, `pickup_window`, `status`,
+  `received_at`).
+- When the order is picked up / delivered (final receipt), the
+  `kroger_restock_untracked_items` event fires once (`order_ref`,
+  `untracked_count`, `pickup_window`, `received_at`, `config_entry_id`) and,
+  with order notifications on, you're told: *"12 items in your Kroger order
+  weren't added through Home Assistant. Scan them when you unload to add them
+  to the pantry."*
+- `recent_received` includes `untracked_count` (last N days) and
+  `untracked_orders`.
+- Fewer items than were pushed (removed in the app, or shorted) counts as 0.
+- It's assumed Kroger's "NUMBER OF ITEMS" counts units (2 × milk = 2), the
+  same way Kroger Restock counts what it pushed.
 
 ### Event: `kroger_restock_order_update`
 
 Fired for every order email that changes something. Data: `order_number`,
 `status`, `previous_status`, `window`, `window_start`, `window_end`,
 `modality`, `shorted`, `shorted_item_ids`, `readded_item_ids` (always empty;
-automatic re-adding is disabled), `substitutions`, `subject`,
-`config_entry_id`.
+automatic re-adding is disabled), `substitutions`, `email` (which kind of
+email: `placed`, `ready`, `completed`, …; replaces `subject`, which carried
+first names), `config_entry_id`.
 
 ### Limitations
 
@@ -1033,6 +1074,7 @@ These come from Kroger's public API:
 | Fix button with count, greyed when nothing to fix | New in v0.15.0; unit tests plus Chromium check; not yet live |
 | Stock check at order time; ask only about out-of-stock items at pickup | New in v0.16.0; tested with sample order emails; not yet live |
 | Second stock check at pickup/delivery; ask about items out at either check | New in v0.17.0; tested with sample order emails; not yet live |
+| Untracked-items count (order item count vs. pushed units) | New in v0.17.3; tested with sample order emails; not yet live. Assumes Kroger's item count is in units |
 | Shortcut Perform Action returning response data | **Verified live** (HA iOS app: the `scan_upc` response JSON reached the Shortcut) |
 | Whether the cart accepts an out-of-stock UPC | Unknown (`tests/test_live_cart.py`, run locally). The integration never pushes out-of-stock items either way |
 | Refresh-token lifetime | Unknown |

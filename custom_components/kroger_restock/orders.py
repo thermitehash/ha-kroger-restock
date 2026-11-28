@@ -26,6 +26,7 @@ from .const import (
     DEFAULT_NOTIFY_ORDERS,
     DOMAIN,
     EVENT_ORDER_UPDATE,
+    EVENT_UNTRACKED,
     ItemStatus,
 )
 from .coordinator import entry_option
@@ -360,10 +361,7 @@ class OrderWatcher:
     async def _handle_event(self, event: Event) -> None:
         data = event.data
         if not self._baseline_ready():
-            _LOGGER.debug(
-                "Ignoring Kroger email until the folder baseline is taken: %s",
-                data.get("subject"),
-            )
+            _LOGGER.debug("Ignoring a Kroger email until the folder baseline is taken")
             return
         keys = self.email_keys(data)
         if self._is_seen(keys):
@@ -493,7 +491,7 @@ class OrderWatcher:
         data.seen_emails = [*data.seen_emails, *keys][-MAX_SEEN_EMAILS:]
         parsed = parse_order_email(subject, text)
         if parsed.status is None:
-            _LOGGER.debug("Kroger email not recognised as an order update: %s", subject)
+            _LOGGER.debug("Kroger email not recognised as an order update")
             coordinator.mark_changed()
             return None
 
@@ -530,7 +528,10 @@ class OrderWatcher:
             order.order_number = parsed.order_number
         order.updated_at = max(order.updated_at, now)
         if parsed.window:
-            order.window = parsed.window
+            # "Today 4:00pm–5:00pm" (ready email) is wrong a day later: keep a
+            # dated label from an earlier email. The timestamps still update.
+            if order.window is None or not parsed.window_relative:
+                order.window = parsed.window
             start, end = self._window_datetimes(parsed, received)
             if start is not None:
                 order.window_start, order.window_end = start, end
@@ -540,7 +541,11 @@ class OrderWatcher:
         order.item_count = parsed.item_count or order.item_count
         order.total = parsed.total if parsed.total is not None else order.total
         order.fee = parsed.fee if parsed.fee is not None else order.fee
-        order.last_subject = subject[:200]
+        for name in ("subtotal", "savings", "tax"):
+            if (value := getattr(parsed, name)) is not None:
+                setattr(order, name, value)
+        order.last_email = str(parsed.status)
+        self._reconcile(order)
         new_shorted: list[str] = []
         if parsed.shorted is not None:
             known = order.shorted or []
@@ -585,7 +590,7 @@ class OrderWatcher:
                 "shorted_item_ids": {n: i.id for n, i in matched.items()},
                 "readded_item_ids": readded,
                 "substitutions": parsed.substitutions or [],
-                "subject": order.last_subject,
+                "email": order.last_email,
                 "config_entry_id": coordinator.config_entry.entry_id,
             },
         )
@@ -603,6 +608,63 @@ class OrderWatcher:
                 "kroger_restock order stock check",
             )
         return order
+
+    def _reconcile(self, order: KrogerOrder) -> None:
+        """Compare the order's item count with what Kroger Restock pushed.
+
+        Kroger's emails never list items, only how many there are. Whatever
+        Kroger Restock didn't push was added in the Kroger app (or by someone
+        else on the account). Done once, when the confirmation arrives; the
+        order's in-cart items are linked to the order number at the same time.
+        """
+        if (
+            order.tracked_units is not None
+            or order.item_count is None
+            or order.placed_at is None
+        ):
+            return
+        items = self.coordinator.tracked_units(before=order.placed_at)
+        order.tracked_units = sum(i.pushed_quantity for i in items)
+        order.untracked_count = untracked_count(order.item_count, order.tracked_units)
+        if order.order_number != UNKNOWN_ORDER:
+            for item in items:
+                item.order_ref = item.order_ref or order.order_number
+        _LOGGER.info(
+            "Order %s: %d items, %d pushed by Kroger Restock, %d untracked",
+            order.order_number,
+            order.item_count,
+            order.tracked_units,
+            order.untracked_count,
+        )
+
+    async def _report_untracked(self, order: KrogerOrder, *, notify: bool) -> None:
+        """Once the order is received, tell the user what to scan."""
+        if not order.untracked_count or order.untracked_reported_at is not None:
+            return
+        order.untracked_reported_at = dt_util.utcnow()
+        self.coordinator.mark_changed()
+        received_at = order.completed_at or order.untracked_reported_at
+        self.hass.bus.async_fire(
+            EVENT_UNTRACKED,
+            {
+                "order_ref": order.order_number,
+                "untracked_count": order.untracked_count,
+                "pickup_window": order.window,
+                "received_at": received_at.isoformat(),
+                "config_entry_id": self.coordinator.config_entry.entry_id,
+            },
+        )
+        if notify:
+            count = order.untracked_count
+            noun = "item" if count == 1 else "items"
+            verb = "wasn't" if count == 1 else "weren't"
+            pronoun = "it" if count == 1 else "them"
+            await self.coordinator.async_notify(
+                "Kroger order: items to scan",
+                f"{count} {noun} in your Kroger order {verb} added through Home "
+                f"Assistant. Scan {pronoun} when you unload to add {pronoun} to "
+                "the pantry.",
+            )
 
     async def async_check_order_stock(
         self, order: KrogerOrder, when: str = "placed"
@@ -662,6 +724,7 @@ class OrderWatcher:
         changed = order.status != previous
         if changed and order.status == OrderStatus.COMPLETED:
             await self._order_completed(order, notify=notify)
+            await self._report_untracked(order, notify=notify)
             return
         if not notify:
             return
@@ -803,3 +866,12 @@ class OrderWatcher:
         return registry.async_get_entity_id(
             "todo", DOMAIN, f"{self.coordinator.config_entry.entry_id}_todo"
         )
+
+
+def untracked_count(item_count: int, tracked_units: int) -> int:
+    """Items in the order that Kroger Restock didn't push (never negative).
+
+    Fewer items than pushed means some were removed in the Kroger app or
+    shorted; that isn't counted.
+    """
+    return max(0, item_count - tracked_units)

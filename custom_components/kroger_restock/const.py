@@ -68,12 +68,13 @@ DEFAULT_LEAD_TIME_DAYS: Final = 1
 WEEKDAYS: Final = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
 
 STORAGE_VERSION: Final = 1
-STORAGE_MINOR_VERSION: Final = 7
+STORAGE_MINOR_VERSION: Final = 8
 
 EVENT_SCANNED: Final = f"{DOMAIN}_scanned"
 EVENT_BACK_IN_STOCK: Final = f"{DOMAIN}_back_in_stock"
 EVENT_ORDER_UPDATE: Final = f"{DOMAIN}_order_update"
 EVENT_RECEIVED: Final = f"{DOMAIN}_received"
+EVENT_UNTRACKED: Final = f"{DOMAIN}_untracked_items"
 
 # Services
 SERVICE_SCAN_UPC: Final = "scan_upc"

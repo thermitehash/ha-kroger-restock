@@ -73,6 +73,7 @@ async def async_setup_entry(
             *(KrogerSensor(coordinator, d) for d in SENSORS),
             KrogerOrderSensor(coordinator),
             KrogerRecentSensor(coordinator),
+            KrogerUntrackedSensor(coordinator),
         ]
     )
 
@@ -149,7 +150,11 @@ class KrogerOrderSensor(KrogerRestockEntity, SensorEntity):
                     "completed": order.completed_at.isoformat()
                     if order.completed_at
                     else None,
-                    "last_email": order.last_subject,
+                    "last_email": order.last_email,
+                    "subtotal": order.subtotal,
+                    "savings": order.savings,
+                    "tax": order.tax,
+                    "untracked_items": order.untracked_count,
                 }
             )
             # Experimental and usually unknown: only present when an email
@@ -246,3 +251,44 @@ def _card_row(item: ListItem, push_date: Any) -> dict[str, object]:
         # Possible matches for the card's Fix pop-up.
         "candidates": list(item.candidates) if item.status in FIX_STATUSES else [],
     }
+
+
+class KrogerUntrackedSensor(KrogerRestockEntity, SensorEntity):
+    """Items in the last confirmed order that weren't added through HA."""
+
+    _attr_translation_key = "untracked_items"
+    _attr_icon = "mdi:cart-plus"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+    def __init__(self, coordinator: KrogerRestockCoordinator) -> None:
+        """Initialize."""
+        super().__init__(coordinator, "untracked_items")
+
+    def _order(self) -> Any:
+        return next(
+            (o for o in self.coordinator.data.orders if o.untracked_count is not None),
+            None,
+        )
+
+    @property
+    def native_value(self) -> int | None:
+        """Return the last confirmed order's untracked item count."""
+        order = self._order()
+        return order.untracked_count if order else None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, object]:
+        """Which order, and how the count was worked out."""
+        order = self._order()
+        if order is None:
+            return {}
+        return {
+            "order_ref": order.order_number,
+            "item_count": order.item_count,
+            "tracked_units": order.tracked_units,
+            "pickup_window": order.window,
+            "status": str(order.status),
+            "received_at": order.completed_at.isoformat()
+            if order.completed_at
+            else None,
+        }

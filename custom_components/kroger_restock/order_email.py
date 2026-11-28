@@ -189,6 +189,15 @@ _MONTHS = {
     )
 }
 _TOTAL = re.compile(r"(?<![a-z])total\*?\s*:?\s*\$\s?([\d,]+\.\d{2})", re.I)
+_SUBTOTAL = re.compile(r"\bsub-?total\*?\s*:?\s*\$\s?([\d,]+\.\d{2})", re.I)
+_SAVINGS = re.compile(r"\bsavings\s*:?\s*-?\s*\$\s?([\d,]+\.\d{2})", re.I)
+_TAX = re.compile(r"\b(?:sales\s+)?tax\s*:?\s*\$\s?([\d,]+\.\d{2})", re.I)
+
+
+def _money(pattern: re.Pattern[str], body: str) -> float | None:
+    match = pattern.search(body)
+    return float(match.group(1).replace(",", "")) if match else None
+
 
 _SHORTED_HEADER = re.compile(
     rf"^(?:out[ -]of[ -]stock(?: items?)?|unavailable(?: items?)?|"
@@ -239,6 +248,9 @@ class OrderEmail:
     item_count: int | None = None
     total: float | None = None
     fee: float | None = None
+    subtotal: float | None = None
+    savings: float | None = None
+    tax: float | None = None
 
 
 class _TextExtractor(HTMLParser):
@@ -537,4 +549,7 @@ def parse_order_email(subject: str, text: str) -> OrderEmail:
         substitutions=_section(lines, _SUBSTITUTION_HEADER, clean=False),
         item_count=item_count,
         total=total,
+        subtotal=_money(_SUBTOTAL, body),
+        savings=_money(_SAVINGS, body),
+        tax=_money(_TAX, body),
     )
